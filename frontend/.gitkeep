@@ -1,0 +1,14 @@
+# Frontend Application
+
+This folder is reserved for the frontend implementation of the University of Kigali Invoices and Payments System.
+
+## Technology Stack (To be determined)
+- React / Vue / Angular
+
+## TODO
+- Set up frontend framework
+- Create UI components for:
+  - Student dashboard
+  - Invoice viewing
+  - Payment tracking
+  - Fee structure display
