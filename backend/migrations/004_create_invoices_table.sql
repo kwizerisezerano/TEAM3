@@ -1,0 +1,25 @@
+-- Create invoices table
+CREATE TABLE IF NOT EXISTS invoices (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    invoice_number VARCHAR(50) NOT NULL UNIQUE,
+    student_id INT NOT NULL,
+    issue_date DATE NOT NULL,
+    due_date DATE NOT NULL,
+    subtotal DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+    tax_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+    discount_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+    total_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+    paid_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+    outstanding_balance DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+    status ENUM('draft', 'pending', 'partial', 'paid', 'overdue', 'cancelled') DEFAULT 'pending',
+    notes TEXT,
+    created_by INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE RESTRICT,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT,
+    INDEX idx_invoice_number (invoice_number),
+    INDEX idx_student_id (student_id),
+    INDEX idx_status (status),
+    INDEX idx_due_date (due_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
