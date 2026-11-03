@@ -2,8 +2,6 @@ package repositories
 
 import (
 	"database/sql"
-
-	"github.com/kwizera/university-invoices/services/invoice/models"
 )
 
 type InvoiceItemRepository struct {
@@ -14,52 +12,47 @@ func NewInvoiceItemRepository(db *sql.DB) *InvoiceItemRepository {
 	return &InvoiceItemRepository{db: db}
 }
 
-func (r *InvoiceItemRepository) Create(item *models.InvoiceItem) error {
-	query := `INSERT INTO invoice_items (invoice_id, fee_type_id, description, quantity, unit_price, amount)
-			  VALUES (?, ?, ?, ?, ?, ?)`
-
-	result, err := r.db.Exec(query, item.InvoiceID, item.FeeTypeID, item.Description,
-		item.Quantity, item.UnitPrice, item.Amount)
-	if err != nil {
-		return err
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return err
-	}
-
-	item.ID = int(id)
-	return nil
+func (r *InvoiceItemRepository) Create(invoiceID, feeTypeID uint, description string, amount int64) error {
+	query := `
+		INSERT INTO invoice_items (invoice_id, fee_type_id, description, amount)
+		VALUES (?, ?, ?, ?)
+	`
+	_, err := r.db.Exec(query, invoiceID, feeTypeID, description, amount)
+	return err
 }
 
-func (r *InvoiceItemRepository) GetByInvoiceID(invoiceID int) ([]models.InvoiceItem, error) {
-	query := `SELECT id, invoice_id, fee_type_id, description, quantity, unit_price, amount, created_at
-			  FROM invoice_items WHERE invoice_id = ?`
-
+func (r *InvoiceItemRepository) GetByInvoiceID(invoiceID uint) ([]map[string]interface{}, error) {
+	query := `
+		SELECT ii.id, ii.fee_type_id, ii.description, ii.amount, ft.name as fee_name
+		FROM invoice_items ii
+		JOIN fee_types ft ON ii.fee_type_id = ft.id
+		WHERE ii.invoice_id = ?
+	`
 	rows, err := r.db.Query(query, invoiceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var items []models.InvoiceItem
+	var items []map[string]interface{}
 	for rows.Next() {
-		var item models.InvoiceItem
-		err := rows.Scan(
-			&item.ID, &item.InvoiceID, &item.FeeTypeID, &item.Description,
-			&item.Quantity, &item.UnitPrice, &item.Amount, &item.CreatedAt,
-		)
-		if err != nil {
+		var id, feeTypeID uint
+		var description, feeName string
+		var amount int64
+		if err := rows.Scan(&id, &feeTypeID, &description, &amount, &feeName); err != nil {
 			return nil, err
 		}
-		items = append(items, item)
+		items = append(items, map[string]interface{}{
+			"fee_type_id": feeTypeID,
+			"fee_name":    feeName,
+			"amount":      amount,
+		})
 	}
 
 	return items, nil
 }
 
-func (r *InvoiceItemRepository) DeleteByInvoiceID(invoiceID int) error {
+func (r *InvoiceItemRepository) DeleteByInvoiceID(invoiceID uint) error {
 	query := `DELETE FROM invoice_items WHERE invoice_id = ?`
 	_, err := r.db.Exec(query, invoiceID)
 	return err

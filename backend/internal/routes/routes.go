@@ -4,171 +4,115 @@ import (
 	"database/sql"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/kwizera/university-invoices/internal/config"
 	"github.com/kwizera/university-invoices/internal/middleware"
+	admincontrollers "github.com/kwizera/university-invoices/services/admin/controllers"
+	authcontrollers "github.com/kwizera/university-invoices/services/auth/controllers"
 	feecontrollers "github.com/kwizera/university-invoices/services/fee/controllers"
+	financecontrollers "github.com/kwizera/university-invoices/services/finance/controllers"
 	invoicecontrollers "github.com/kwizera/university-invoices/services/invoice/controllers"
 	paymentcontrollers "github.com/kwizera/university-invoices/services/payment/controllers"
+	receiptcontrollers "github.com/kwizera/university-invoices/services/receipt/controllers"
 	studentcontrollers "github.com/kwizera/university-invoices/services/student/controllers"
-	usercontrollers "github.com/kwizera/university-invoices/services/user/controllers"
-	"github.com/kwizera/university-invoices/shared/repositories"
+	webhookcontrollers "github.com/kwizera/university-invoices/services/webhook/controllers"
 )
 
-func SetupRouter(db *sql.DB) http.Handler {
-	// Initialize repositories
-	userRepo := repositories.NewUserRepository(db)
-	studentRepo := repositories.NewStudentRepository(db)
-	invoiceRepo := repositories.NewInvoiceRepository(db)
-	invoiceItemRepo := repositories.NewInvoiceItemRepository(db)
-	paymentRepo := repositories.NewPaymentRepository(db)
-	feeRepo := repositories.NewFeeRepository(db)
-	receiptRepo := repositories.NewReceiptRepository(db)
+func SetupRouter(db *sql.DB, cfg *config.Config) http.Handler {
+	r := chi.NewRouter()
 
-	// Initialize controllers
-	userController := usercontrollers.NewUserController(userRepo)
-	studentController := studentcontrollers.NewStudentController(studentRepo)
-	invoiceController := invoicecontrollers.NewInvoiceController(invoiceRepo, invoiceItemRepo, studentRepo)
-	paymentController := paymentcontrollers.NewPaymentController(paymentRepo, invoiceRepo, receiptRepo)
-	feeController := feecontrollers.NewFeeController(feeRepo)
+	authMiddleware := middleware.NewAuthMiddleware(cfg.JWTSecret)
 
-	// Create router
-	mux := http.NewServeMux()
+	r.Use(middleware.CORS)
 
-	// Apply CORS middleware
-	handler := middleware.CORS(mux)
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Group(func(r chi.Router) {
+			r.Post("/auth/login", authcontrollers.NewAuthController(db, cfg.JWTSecret).Login)
+			r.Post("/auth/forgot-password", authcontrollers.NewAuthController(db, cfg.JWTSecret).ForgotPassword)
+		})
 
-	// Health check
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		r.Group(func(r chi.Router) {
+			r.Use(authMiddleware.Authenticate)
+			r.Use(middleware.RequireRole("student", "finance", "admin"))
+
+			r.Post("/auth/logout", authcontrollers.NewAuthController(db, cfg.JWTSecret).Logout)
+			r.Get("/auth/me", authcontrollers.NewAuthController(db, cfg.JWTSecret).GetMe)
+
+			r.Route("/student", func(r chi.Router) {
+				r.Use(middleware.RequireRole("student"))
+				r.Get("/dashboard", studentcontrollers.NewStudentController(db).GetDashboard)
+			})
+
+			r.Route("/invoices", func(r chi.Router) {
+				r.Use(middleware.RequireRole("student", "finance"))
+				r.Get("/", invoicecontrollers.NewInvoiceController(db).ListInvoices)
+				r.Post("/", invoicecontrollers.NewInvoiceController(db).CreateInvoice)
+				r.Route("/{invoiceId}", func(r chi.Router) {
+					r.Get("/", invoicecontrollers.NewInvoiceController(db).GetInvoice)
+					r.Put("/", invoicecontrollers.NewInvoiceController(db).UpdateInvoice)
+					r.Post("/issue", invoicecontrollers.NewInvoiceController(db).IssueInvoice)
+					r.Post("/payments", paymentcontrollers.NewPaymentController(db, cfg).CreatePayment)
+				})
+			})
+
+			r.Route("/payments", func(r chi.Router) {
+				r.Use(middleware.RequireRole("student", "finance"))
+				r.Get("/", paymentcontrollers.NewPaymentController(db, cfg).ListPayments)
+				r.Route("/{paymentId}", func(r chi.Router) {
+					r.Get("/", paymentcontrollers.NewPaymentController(db, cfg).GetPayment)
+					r.Post("/cancel", paymentcontrollers.NewPaymentController(db, cfg).CancelPayment)
+					r.Get("/notes", paymentcontrollers.NewPaymentController(db, cfg).ListPaymentNotes)
+					r.Post("/notes", paymentcontrollers.NewPaymentController(db, cfg).CreatePaymentNote)
+				})
+			})
+
+			r.Route("/receipts", func(r chi.Router) {
+				r.Use(middleware.RequireRole("student", "finance"))
+				r.Route("/{receiptId}", func(r chi.Router) {
+					r.Get("/", receiptcontrollers.NewReceiptController(db).GetReceipt)
+					r.Get("/pdf", receiptcontrollers.NewReceiptController(db).GetReceiptPDF)
+				})
+			})
+
+			r.Route("/finance", func(r chi.Router) {
+				r.Use(middleware.RequireRole("finance"))
+				r.Get("/dashboard", financecontrollers.NewFinanceController(db).GetDashboard)
+				r.Get("/reports/summary", financecontrollers.NewFinanceController(db).GetReportSummary)
+				r.Get("/reports/accounts", financecontrollers.NewFinanceController(db).GetAccountsReport)
+				r.Get("/students", financecontrollers.NewFinanceController(db).SearchStudents)
+				r.Get("/programmes", financecontrollers.NewFinanceController(db).ListProgrammes)
+				r.Get("/semesters", financecontrollers.NewFinanceController(db).ListSemesters)
+			})
+
+			r.Route("/fee-types", func(r chi.Router) {
+				r.Use(middleware.RequireRole("finance"))
+				r.Get("/", feecontrollers.NewFeeController(db).ListFeeTypes)
+				r.Post("/", feecontrollers.NewFeeController(db).CreateFeeType)
+				r.Route("/{feeTypeId}", func(r chi.Router) {
+					r.Get("/", feecontrollers.NewFeeController(db).GetFeeType)
+					r.Put("/", feecontrollers.NewFeeController(db).UpdateFeeType)
+				})
+			})
+
+			r.Route("/admin", func(r chi.Router) {
+				r.Use(middleware.RequireRole("admin"))
+				r.Get("/users", admincontrollers.NewAdminController(db).ListUsers)
+				r.Post("/users", admincontrollers.NewAdminController(db).CreateUser)
+				r.Route("/users/{userId}", func(r chi.Router) {
+					r.Patch("/access", admincontrollers.NewAdminController(db).UpdateUserAccess)
+				})
+				r.Get("/roles", admincontrollers.NewAdminController(db).ListRoles)
+				r.Get("/audit-logs", admincontrollers.NewAdminController(db).ListAuditLogs)
+			})
+		})
+
+		r.Post("/webhooks/mopay", webhookcontrollers.NewWebhookController(db).HandleMoPayWebhook)
+	})
+
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
 
-	// Auth routes
-	mux.HandleFunc("/api/auth/login", userController.Login)
-	mux.HandleFunc("/api/auth/register", userController.CreateUser)
-
-	// User routes
-	mux.HandleFunc("/api/users", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			userController.ListUsers(w, r)
-		case http.MethodPost:
-			userController.CreateUser(w, r)
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-	mux.HandleFunc("/api/users/", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			userController.GetUser(w, r)
-		case http.MethodPut:
-			userController.UpdateUser(w, r)
-		case http.MethodDelete:
-			userController.DeleteUser(w, r)
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-
-	// Student routes
-	mux.HandleFunc("/api/students", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			studentController.ListStudents(w, r)
-		case http.MethodPost:
-			studentController.CreateStudent(w, r)
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-	mux.HandleFunc("/api/students/by-id", studentController.GetStudentByStudentID)
-	mux.HandleFunc("/api/students/", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			studentController.GetStudent(w, r)
-		case http.MethodPut:
-			studentController.UpdateStudent(w, r)
-		case http.MethodDelete:
-			studentController.DeleteStudent(w, r)
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-
-	// Fee type routes
-	mux.HandleFunc("/api/fees", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			feeController.ListFeeTypes(w, r)
-		case http.MethodPost:
-			feeController.CreateFeeType(w, r)
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-	mux.HandleFunc("/api/fees/", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			feeController.GetFeeType(w, r)
-		case http.MethodPut:
-			feeController.UpdateFeeType(w, r)
-		case http.MethodDelete:
-			feeController.DeleteFeeType(w, r)
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-
-	// Invoice routes
-	mux.HandleFunc("/api/invoices", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			invoiceController.ListInvoices(w, r)
-		case http.MethodPost:
-			invoiceController.CreateInvoice(w, r)
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-	mux.HandleFunc("/api/invoices/student", invoiceController.GetInvoicesByStudent)
-	mux.HandleFunc("/api/invoices/", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			invoiceController.GetInvoice(w, r)
-		case http.MethodPut:
-			invoiceController.UpdateInvoice(w, r)
-		case http.MethodDelete:
-			invoiceController.DeleteInvoice(w, r)
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-
-	// Payment routes
-	mux.HandleFunc("/api/payments", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			paymentController.ListPayments(w, r)
-		case http.MethodPost:
-			paymentController.CreatePayment(w, r)
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-	mux.HandleFunc("/api/payments/invoice", paymentController.GetPaymentsByInvoice)
-	mux.HandleFunc("/api/payments/student", paymentController.GetPaymentsByStudent)
-	mux.HandleFunc("/api/payments/", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			paymentController.GetPayment(w, r)
-		case http.MethodPut:
-			paymentController.UpdatePayment(w, r)
-		case http.MethodDelete:
-			paymentController.DeletePayment(w, r)
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-
-	return handler
+	return r
 }

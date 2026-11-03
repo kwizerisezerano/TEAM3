@@ -10,22 +10,34 @@ import (
 )
 
 type Config struct {
-	DBHost     string
-	DBPort     string
-	DBUser     string
-	DBPassword string
-	DBName     string
-	ServerPort string
+	DBHost             string
+	DBPort             string
+	DBUser             string
+	DBPassword         string
+	DBName             string
+	ServerPort         string
+	JWTSecret          string
+	MoPayAPIURL        string
+	MoPayAPIToken      string
+	MoPayWalletPhone   string
+	PaymentCallbackURL string
+	PaymentTimeoutMS   int
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		DBHost:     getEnv("DB_HOST", "localhost"),
-		DBPort:     getEnv("DB_PORT", "3306"),
-		DBUser:     getEnv("DB_USER", "root"),
-		DBPassword: getEnv("DB_PASSWORD", ""),
-		DBName:     getEnv("DB_NAME", "university_invoices"),
-		ServerPort: getEnv("SERVER_PORT", "9000"),
+		DBHost:             getEnv("DB_HOST", "localhost"),
+		DBPort:             getEnv("DB_PORT", "3306"),
+		DBUser:             getEnv("DB_USER", "root"),
+		DBPassword:         getEnv("DB_PASSWORD", ""),
+		DBName:             getEnv("DB_NAME", "university_invoices"),
+		ServerPort:         getEnv("SERVER_PORT", "9107"),
+		JWTSecret:          getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
+		MoPayAPIURL:        getEnv("MOPAY_API_URL", "https://api.mopay.ishema.rw"),
+		MoPayAPIToken:      getEnv("MOPAY_API_TOKEN", ""),
+		MoPayWalletPhone:   getEnv("MOPAY_WALLET_PHONE", "250790989830"),
+		PaymentCallbackURL: getEnv("PAYMENT_CALLBACK_URL", ""),
+		PaymentTimeoutMS:   getEnvInt("PAYMENT_TIMEOUT_MS", 25000),
 	}
 
 	return cfg, nil
@@ -34,6 +46,17 @@ func Load() (*Config, error) {
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return defaultValue
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		var intValue int
+		_, err := fmt.Sscanf(value, "%d", &intValue)
+		if err == nil {
+			return intValue
+		}
 	}
 	return defaultValue
 }

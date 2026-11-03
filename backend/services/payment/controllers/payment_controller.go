@@ -1,248 +1,283 @@
 package controllers
 
 import (
+	"database/sql"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
-	invoicemodels "github.com/kwizera/university-invoices/services/invoice/models"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-playground/validator/v10"
+
+	"github.com/kwizera/university-invoices/internal/config"
+	"github.com/kwizera/university-invoices/services/mopay"
 	"github.com/kwizera/university-invoices/services/payment/models"
 	"github.com/kwizera/university-invoices/shared/repositories"
+	"github.com/kwizera/university-invoices/shared/utils"
 )
 
 type PaymentController struct {
-	paymentRepo *repositories.PaymentRepository
-	invoiceRepo *repositories.InvoiceRepository
-	receiptRepo *repositories.ReceiptRepository
+	paymentRepo  *repositories.PaymentRepository
+	invoiceRepo  *repositories.InvoiceRepository
+	receiptRepo  *repositories.ReceiptRepository
+	noteRepo     *repositories.PaymentNoteRepository
+	studentRepo  *repositories.StudentRepository
+	auditRepo    *repositories.AuditRepository
+	mopayService *mopay.Service
+	validator    *validator.Validate
 }
 
-func NewPaymentController(
-	paymentRepo *repositories.PaymentRepository,
-	invoiceRepo *repositories.InvoiceRepository,
-	receiptRepo *repositories.ReceiptRepository,
-) *PaymentController {
+func NewPaymentController(db *sql.DB, cfg *config.Config) *PaymentController {
 	return &PaymentController{
-		paymentRepo: paymentRepo,
-		invoiceRepo: invoiceRepo,
-		receiptRepo: receiptRepo,
+		paymentRepo:  repositories.NewPaymentRepository(db),
+		invoiceRepo:  repositories.NewInvoiceRepository(db),
+		receiptRepo:  repositories.NewReceiptRepository(db),
+		noteRepo:     repositories.NewPaymentNoteRepository(db),
+		studentRepo:  repositories.NewStudentRepository(db),
+		auditRepo:    repositories.NewAuditRepository(db),
+		mopayService: mopay.NewService(cfg.MoPayAPIURL, cfg.MoPayAPIToken, cfg.MoPayWalletPhone, cfg.PaymentCallbackURL, cfg.PaymentTimeoutMS),
+		validator:    validator.New(),
 	}
-}
-
-func (c *PaymentController) CreatePayment(w http.ResponseWriter, r *http.Request) {
-	var req models.CreatePaymentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	// Verify invoice exists
-	invoice, err := c.invoiceRepo.GetByID(req.InvoiceID)
-	if err != nil {
-		http.Error(w, "Invoice not found", http.StatusNotFound)
-		return
-	}
-
-	// Verify student matches
-	if invoice.StudentID != req.StudentID {
-		http.Error(w, "Student ID does not match invoice", http.StatusBadRequest)
-		return
-	}
-
-	// Check if payment amount exceeds outstanding balance
-	if req.Amount > invoice.OutstandingBalance {
-		http.Error(w, "Payment amount exceeds outstanding balance", http.StatusBadRequest)
-		return
-	}
-
-	// Generate payment number
-	paymentNumber := fmt.Sprintf("PAY-%d-%s", req.InvoiceID, time.Now().Format("20060102150405"))
-
-	// TODO: Get user ID from JWT token
-	recordedBy := 1
-
-	payment := &models.Payment{
-		PaymentNumber:   paymentNumber,
-		InvoiceID:       req.InvoiceID,
-		StudentID:       req.StudentID,
-		Amount:          req.Amount,
-		PaymentMethod:   req.PaymentMethod,
-		PaymentDate:     req.PaymentDate,
-		ReferenceNumber: req.ReferenceNumber,
-		Status:          models.PaymentStatusCompleted,
-		Notes:           req.Notes,
-		RecordedBy:      recordedBy,
-	}
-
-	if err := c.paymentRepo.Create(payment); err != nil {
-		http.Error(w, "Failed to create payment", http.StatusInternalServerError)
-		return
-	}
-
-	// Update invoice payment amounts
-	newPaidAmount := invoice.PaidAmount + req.Amount
-	newOutstandingBalance := invoice.OutstandingBalance - req.Amount
-
-	if err := c.invoiceRepo.UpdatePaymentAmounts(req.InvoiceID, newPaidAmount, newOutstandingBalance); err != nil {
-		http.Error(w, "Failed to update invoice", http.StatusInternalServerError)
-		return
-	}
-
-	// Update invoice status based on balance
-	if newOutstandingBalance <= 0 {
-		c.invoiceRepo.UpdateInvoiceStatus(req.InvoiceID, invoicemodels.InvoiceStatusPaid)
-	} else if newPaidAmount > 0 {
-		c.invoiceRepo.UpdateInvoiceStatus(req.InvoiceID, invoicemodels.InvoiceStatusPartial)
-	}
-
-	// Generate receipt
-	receiptNumber := fmt.Sprintf("RCT-%d-%s", payment.ID, time.Now().Format("20060102"))
-	receipt := &models.Receipt{
-		ReceiptNumber: receiptNumber,
-		PaymentID:     payment.ID,
-		InvoiceID:     req.InvoiceID,
-		StudentID:     req.StudentID,
-		Amount:        req.Amount,
-		IssuedDate:    time.Now(),
-		IssuedBy:      recordedBy,
-	}
-
-	if err := c.receiptRepo.Create(receipt); err != nil {
-		// Log error but don't fail the payment
-		fmt.Printf("Warning: failed to create receipt: %v\n", err)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(payment)
-}
-
-func (c *PaymentController) GetPayment(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.Atoi(r.URL.Query().Get("id"))
-	if err != nil {
-		http.Error(w, "Invalid payment ID", http.StatusBadRequest)
-		return
-	}
-
-	payment, err := c.paymentRepo.GetByID(id)
-	if err != nil {
-		http.Error(w, "Payment not found", http.StatusNotFound)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(payment)
-}
-
-func (c *PaymentController) GetPaymentsByInvoice(w http.ResponseWriter, r *http.Request) {
-	invoiceID, err := strconv.Atoi(r.URL.Query().Get("invoice_id"))
-	if err != nil {
-		http.Error(w, "Invalid invoice ID", http.StatusBadRequest)
-		return
-	}
-
-	payments, err := c.paymentRepo.GetByInvoiceID(invoiceID)
-	if err != nil {
-		http.Error(w, "Failed to get payments", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(payments)
-}
-
-func (c *PaymentController) GetPaymentsByStudent(w http.ResponseWriter, r *http.Request) {
-	studentID, err := strconv.Atoi(r.URL.Query().Get("student_id"))
-	if err != nil {
-		http.Error(w, "Invalid student ID", http.StatusBadRequest)
-		return
-	}
-
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-
-	if limit == 0 {
-		limit = 50
-	}
-
-	payments, err := c.paymentRepo.GetByStudentID(studentID, limit, offset)
-	if err != nil {
-		http.Error(w, "Failed to get payments", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(payments)
 }
 
 func (c *PaymentController) ListPayments(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	userID := r.Context().Value("userID").(uint)
+	role := r.Context().Value("userRole").(string)
 
-	if limit == 0 {
-		limit = 50
+	var studentID uint
+	if role == "student" {
+		sid, _, _, err := c.studentRepo.GetStudentByUserID(userID)
+		if err != nil {
+			http.Error(w, `{"code":"NOT_FOUND","message":"Student not found"}`, http.StatusNotFound)
+			return
+		}
+		studentID = sid
 	}
 
-	payments, err := c.paymentRepo.List(limit, offset)
+	status := r.URL.Query().Get("status")
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page == 0 {
+		page = 1
+	}
+	pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
+	if pageSize == 0 {
+		pageSize = 20
+	}
+
+	payments, total, err := c.paymentRepo.List(studentID, status, page, pageSize)
 	if err != nil {
-		http.Error(w, "Failed to list payments", http.StatusInternalServerError)
+		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to fetch payments"}`, http.StatusInternalServerError)
 		return
+	}
+
+	response := map[string]interface{}{
+		"data":      payments,
+		"page":      page,
+		"page_size": pageSize,
+		"total":     total,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(payments)
+	json.NewEncoder(w).Encode(response)
 }
 
-func (c *PaymentController) UpdatePayment(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.Atoi(r.URL.Query().Get("id"))
+func (c *PaymentController) GetPayment(w http.ResponseWriter, r *http.Request) {
+	paymentID, _ := strconv.ParseUint(chi.URLParam(r, "paymentId"), 10, 32)
+	userID := r.Context().Value("userID").(uint)
+	role := r.Context().Value("userRole").(string)
+
+	payment, err := c.paymentRepo.GetByID(uint(paymentID))
 	if err != nil {
-		http.Error(w, "Invalid payment ID", http.StatusBadRequest)
+		http.Error(w, `{"code":"NOT_FOUND","message":"Payment not found"}`, http.StatusNotFound)
 		return
 	}
 
-	var req models.UpdatePaymentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	payment, err := c.paymentRepo.GetByID(id)
-	if err != nil {
-		http.Error(w, "Payment not found", http.StatusNotFound)
-		return
-	}
-
-	if req.Status != nil {
-		payment.Status = *req.Status
-	}
-	if req.ReferenceNumber != nil {
-		payment.ReferenceNumber = *req.ReferenceNumber
-	}
-	if req.Notes != nil {
-		payment.Notes = *req.Notes
-	}
-
-	if err := c.paymentRepo.Update(payment); err != nil {
-		http.Error(w, "Failed to update payment", http.StatusInternalServerError)
-		return
+	if role == "student" {
+		sid, _, _, _ := c.studentRepo.GetStudentByUserID(userID)
+		if sid != payment["student_id"].(uint) {
+			http.Error(w, `{"code":"FORBIDDEN","message":"You can only view your own payments"}`, http.StatusForbidden)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(payment)
 }
 
-func (c *PaymentController) DeletePayment(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.Atoi(r.URL.Query().Get("id"))
-	if err != nil {
-		http.Error(w, "Invalid payment ID", http.StatusBadRequest)
+func (c *PaymentController) CreatePayment(w http.ResponseWriter, r *http.Request) {
+	invoiceID, _ := strconv.ParseUint(chi.URLParam(r, "invoiceId"), 10, 32)
+	userID := r.Context().Value("userID").(uint)
+	role := r.Context().Value("userRole").(string)
+
+	if role != "student" {
+		http.Error(w, `{"code":"FORBIDDEN","message":"Only students can create payments"}`, http.StatusForbidden)
 		return
 	}
 
-	if err := c.paymentRepo.Delete(id); err != nil {
-		http.Error(w, "Failed to delete payment", http.StatusInternalServerError)
+	var req models.CreatePaymentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"code":"VALIDATION_ERROR","message":"Invalid request body"}`, http.StatusBadRequest)
 		return
 	}
+
+	if err := c.validator.Struct(&req); err != nil {
+		http.Error(w, `{"code":"VALIDATION_ERROR","message":"One or more fields are invalid"}`, http.StatusBadRequest)
+		return
+	}
+
+	sid, _, _, err := c.studentRepo.GetStudentByUserID(userID)
+	if err != nil {
+		http.Error(w, `{"code":"NOT_FOUND","message":"Student not found"}`, http.StatusNotFound)
+		return
+	}
+
+	invoice, err := c.invoiceRepo.GetByID(uint(invoiceID))
+	if err != nil {
+		http.Error(w, `{"code":"NOT_FOUND","message":"Invoice not found"}`, http.StatusNotFound)
+		return
+	}
+
+	if invoice["student_id"].(uint) != sid {
+		http.Error(w, `{"code":"FORBIDDEN","message":"Invoice does not belong to you"}`, http.StatusForbidden)
+		return
+	}
+
+	status := invoice["status"].(string)
+	if status != "Issued" && status != "Partially Paid" && status != "Overdue" {
+		http.Error(w, `{"code":"CONFLICT","message":"Invoice cannot be paid"}`, http.StatusConflict)
+		return
+	}
+
+	balance := invoice["balance"].(int64)
+	if req.Amount < 1 || req.Amount > balance {
+		http.Error(w, `{"code":"VALIDATION_ERROR","message":"Amount must be between 1 and the outstanding balance"}`, http.StatusBadRequest)
+		return
+	}
+
+	hasPending, _ := c.paymentRepo.HasPendingPayment(uint(invoiceID))
+	if hasPending {
+		http.Error(w, `{"code":"CONFLICT","message":"A pending payment already exists for this invoice"}`, http.StatusConflict)
+		return
+	}
+
+	mopayReference := "MPY-" + time.Now().Format("20060102") + "-" + utils.RandomString(4)
+	mopayTransactionID := utils.RandomString(20)
+	expiresAt := time.Now().Add(2 * time.Minute)
+
+	_, err = c.paymentRepo.Create(uint(invoiceID), sid, req.Amount, req.MobileNumber, mopayReference, mopayTransactionID, expiresAt)
+	if err != nil {
+		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to create payment"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Call MoPay API to initiate payment
+	mopayReq := mopay.InitiatePaymentRequest{
+		TransactionID: mopayTransactionID,
+		Amount:        float64(req.Amount),
+		Currency:      "RWF",
+		Phone:         req.MobileNumber,
+		PaymentMode:   "MOBILE",
+		Message:       "Invoice payment",
+		CallbackURL:   "",
+		Transfers: []mopay.Transfer{
+			{
+				Phone:   c.mopayService.WalletPhone(),
+				Amount:  float64(req.Amount),
+				Message: "Invoice payment collection",
+			},
+		},
+	}
+
+	_, err = c.mopayService.InitiatePayment(mopayReq)
+	if err != nil {
+		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to initiate MoPay payment"}`, http.StatusInternalServerError)
+		return
+	}
+
+	c.auditRepo.Log("user", &userID, "Payment created", "payment", mopayReference, "", "Pending")
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (c *PaymentController) CancelPayment(w http.ResponseWriter, r *http.Request) {
+	paymentID, _ := strconv.ParseUint(chi.URLParam(r, "paymentId"), 10, 32)
+	userID := r.Context().Value("userID").(uint)
+
+	payment, err := c.paymentRepo.GetByID(uint(paymentID))
+	if err != nil {
+		http.Error(w, `{"code":"NOT_FOUND","message":"Payment not found"}`, http.StatusNotFound)
+		return
+	}
+
+	sid, _, _, _ := c.studentRepo.GetStudentByUserID(userID)
+	if sid != payment["student_id"].(uint) {
+		http.Error(w, `{"code":"FORBIDDEN","message":"You can only cancel your own payments"}`, http.StatusForbidden)
+		return
+	}
+
+	err = c.paymentRepo.Cancel(uint(paymentID))
+	if err != nil {
+		if err.Error() == "payment not found or not in pending status" {
+			http.Error(w, `{"code":"CONFLICT","message":"Payment cannot be cancelled"}`, http.StatusConflict)
+			return
+		}
+		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to cancel payment"}`, http.StatusInternalServerError)
+		return
+	}
+
+	c.auditRepo.Log("user", &userID, "Payment cancelled", "payment", payment["mopay_reference"].(string), "Pending", "Cancelled")
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (c *PaymentController) ListPaymentNotes(w http.ResponseWriter, r *http.Request) {
+	paymentID, _ := strconv.ParseUint(chi.URLParam(r, "paymentId"), 10, 32)
+	role := r.Context().Value("userRole").(string)
+
+	if role != "finance" {
+		http.Error(w, `{"code":"FORBIDDEN","message":"Only finance can view payment notes"}`, http.StatusForbidden)
+		return
+	}
+
+	notes, err := c.noteRepo.List(uint(paymentID))
+	if err != nil {
+		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to fetch notes"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(notes)
+}
+
+func (c *PaymentController) CreatePaymentNote(w http.ResponseWriter, r *http.Request) {
+	paymentID, _ := strconv.ParseUint(chi.URLParam(r, "paymentId"), 10, 32)
+	userID := r.Context().Value("userID").(uint)
+	role := r.Context().Value("userRole").(string)
+
+	if role != "finance" {
+		http.Error(w, `{"code":"FORBIDDEN","message":"Only finance can add payment notes"}`, http.StatusForbidden)
+		return
+	}
+
+	var req models.CreatePaymentNoteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"code":"VALIDATION_ERROR","message":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := c.validator.Struct(&req); err != nil {
+		http.Error(w, `{"code":"VALIDATION_ERROR","message":"One or more fields are invalid"}`, http.StatusBadRequest)
+		return
+	}
+
+	err := c.noteRepo.Create(uint(paymentID), userID, req.Note)
+	if err != nil {
+		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to create note"}`, http.StatusInternalServerError)
+		return
+	}
+
+	c.auditRepo.Log("user", &userID, "Payment note added", "payment", strconv.Itoa(int(paymentID)), "", req.Note)
+
+	w.WriteHeader(http.StatusCreated)
 }

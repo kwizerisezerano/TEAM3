@@ -3,44 +3,52 @@ package models
 import "time"
 
 type Student struct {
-	ID          int        `json:"id"`
-	StudentID   string     `json:"student_id"`
-	FirstName   string     `json:"first_name"`
-	LastName    string     `json:"last_name"`
-	Email       string     `json:"email"`
-	Phone       string     `json:"phone"`
-	Program     string     `json:"program"`
-	Semester    string     `json:"semester"`
-	Year        int        `json:"year"`
-	DateOfBirth *time.Time `json:"date_of_birth,omitempty"`
-	Address     string     `json:"address"`
-	IsActive    bool       `json:"is_active"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID            uint   `json:"id"`
+	UserID        uint   `json:"user_id"`
+	StudentNumber string `json:"student_number"`
+	ProgrammeID   uint   `json:"programme_id"`
+	FullName      string `json:"full_name"`
+	Email         string `json:"email"`
+	Role          string `json:"role"`
+	AccessStatus  string `json:"access_status"`
 }
 
-type CreateStudentRequest struct {
-	StudentID   string     `json:"student_id" binding:"required"`
-	FirstName   string     `json:"first_name" binding:"required"`
-	LastName    string     `json:"last_name" binding:"required"`
-	Email       string     `json:"email" binding:"required,email"`
-	Phone       string     `json:"phone" binding:"required"`
-	Program     string     `json:"program" binding:"required"`
-	Semester    string     `json:"semester" binding:"required"`
-	Year        int        `json:"year" binding:"required"`
-	DateOfBirth *time.Time `json:"date_of_birth"`
-	Address     string     `json:"address"`
+type StudentDashboard struct {
+	Semester           string         `json:"semester"`
+	OutstandingBalance int64          `json:"outstanding_balance"`
+	UnpaidInvoiceCount int            `json:"unpaid_invoice_count"`
+	TotalInvoiced      int64          `json:"total_invoiced"`
+	InvoiceCount       int            `json:"invoice_count"`
+	TotalPaid          int64          `json:"total_paid"`
+	NextDueDate        string         `json:"next_due_date"`
+	LatestPayment      *PaymentDetail `json:"latest_payment,omitempty"`
+	RecentInvoices     []InvoiceInfo  `json:"recent_invoices"`
 }
 
-type UpdateStudentRequest struct {
-	FirstName   *string    `json:"first_name"`
-	LastName    *string    `json:"last_name"`
-	Email       *string    `json:"email"`
-	Phone       *string    `json:"phone"`
-	Program     *string    `json:"program"`
-	Semester    *string    `json:"semester"`
-	Year        *int       `json:"year"`
-	DateOfBirth *time.Time `json:"date_of_birth"`
-	Address     *string    `json:"address"`
-	IsActive    *bool      `json:"is_active"`
+type InvoiceInfo struct {
+	ID            uint   `json:"id"`
+	InvoiceNumber string `json:"invoice_number"`
+	Description   string `json:"description"`
+	TotalAmount   int64  `json:"total_amount"`
+	Balance       int64  `json:"balance"`
+	DueDate       string `json:"due_date"`
+	Status        string `json:"status"`
+}
+
+type PaymentDetail struct {
+	ID                 uint      `json:"id"`
+	InvoiceID          uint      `json:"invoice_id"`
+	InvoiceNumber      string    `json:"invoice_number"`
+	StudentName        string    `json:"student_name"`
+	Description        string    `json:"description"`
+	Amount             int64     `json:"amount"`
+	Status             string    `json:"status"`
+	MoPayReference     string    `json:"mopay_reference"`
+	MobileNumberMasked string    `json:"mobile_number_masked"`
+	CreatedAt          time.Time `json:"created_at"`
+	StatusUpdatedAt    time.Time `json:"status_updated_at"`
+	ExpiresAt          time.Time `json:"expires_at"`
+	Stuck              bool      `json:"stuck"`
+	ReceiptID          *uint     `json:"receipt_id,omitempty"`
+	NewInvoiceBalance  int64     `json:"new_invoice_balance,omitempty"`
 }

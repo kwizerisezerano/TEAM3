@@ -2,8 +2,10 @@ package repositories
 
 import (
 	"database/sql"
+	"errors"
+	"fmt"
 
-	"github.com/kwizera/university-invoices/services/invoice/models"
+	"github.com/kwizera/university-invoices/shared/utils"
 )
 
 type InvoiceRepository struct {
@@ -14,157 +16,310 @@ func NewInvoiceRepository(db *sql.DB) *InvoiceRepository {
 	return &InvoiceRepository{db: db}
 }
 
-func (r *InvoiceRepository) Create(invoice *models.Invoice) error {
-	query := `INSERT INTO invoices (invoice_number, student_id, issue_date, due_date, subtotal, 
-			  tax_amount, discount_amount, total_amount, paid_amount, outstanding_balance, 
-			  status, notes, created_by)
-			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+func (r *InvoiceRepository) List(studentID uint, status, semesterID, programmeID, queryStr, from, to string, page, pageSize int) ([]map[string]interface{}, int, error) {
+	offset := (page - 1) * pageSize
 
-	result, err := r.db.Exec(query, invoice.InvoiceNumber, invoice.StudentID, invoice.IssueDate,
-		invoice.DueDate, invoice.Subtotal, invoice.TaxAmount, invoice.DiscountAmount,
-		invoice.TotalAmount, invoice.PaidAmount, invoice.OutstandingBalance, invoice.Status,
-		invoice.Notes, invoice.CreatedBy)
+	query := `
+		SELECT i.id, i.invoice_number, i.student_id, i.programme_id, i.semester_id,
+		       i.total_amount, i.paid_amount, i.due_date, i.status, i.issued_at,
+		       u.full_name, s.student_number, p.name as programme, sem.name as semester
+		FROM invoices i
+		JOIN students s ON i.student_id = s.id
+		JOIN users u ON s.user_id = u.id
+		JOIN programmes p ON i.programme_id = p.id
+		JOIN semesters sem ON i.semester_id = sem.id
+		WHERE 1=1
+	`
+	var args []interface{}
+	argCount := 0
+
+	if studentID > 0 {
+		argCount++
+		query += " AND i.student_id = ?"
+		args = append(args, studentID)
+	}
+
+	if status != "" {
+		argCount++
+		query += " AND i.status = ?"
+		args = append(args, status)
+	}
+
+	if semesterID != "" {
+		argCount++
+		query += " AND i.semester_id = ?"
+		args = append(args, semesterID)
+	}
+
+	if programmeID != "" {
+		argCount++
+		query += " AND i.programme_id = ?"
+		args = append(args, programmeID)
+	}
+
+	if queryStr != "" {
+		argCount++
+		query += " AND (s.student_number LIKE ? OR u.full_name LIKE ? OR i.invoice_number LIKE ?)"
+		args = append(args, "%"+queryStr+"%", "%"+queryStr+"%", "%"+queryStr+"%")
+	}
+
+	if from != "" {
+		argCount++
+		query += " AND i.due_date >= ?"
+		args = append(args, from)
+	}
+
+	if to != "" {
+		argCount++
+		query += " AND i.due_date <= ?"
+		args = append(args, to)
+	}
+
+	countQuery := "SELECT COUNT(*) FROM invoices i" + query[61:]
+	var total int
+	if err := r.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	query += " ORDER BY i.created_at DESC LIMIT ? OFFSET ?"
+	args = append(args, pageSize, offset)
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var invoices []map[string]interface{}
+	for rows.Next() {
+		var id, studentID, programmeID, semesterID uint
+		var invoiceNumber string
+		var totalAmount, paidAmount int64
+		var dueDate string
+		var status string
+		var issuedAt sql.NullTime
+		var fullName, studentNumber, programme, semester string
+
+		if err := rows.Scan(&id, &invoiceNumber, &studentID, &programmeID, &semesterID,
+			&totalAmount, &paidAmount, &dueDate, &status, &issuedAt,
+			&fullName, &studentNumber, &programme, &semester); err != nil {
+			return nil, 0, err
+		}
+
+		balance := totalAmount - paidAmount
+		description := "Invoice"
+
+		invoices = append(invoices, map[string]interface{}{
+			"id":             id,
+			"invoice_number": invoiceNumber,
+			"student": map[string]interface{}{
+				"id":             studentID,
+				"full_name":      fullName,
+				"student_number": studentNumber,
+			},
+			"description":  description,
+			"total_amount": totalAmount,
+			"balance":      balance,
+			"due_date":     dueDate,
+			"status":       status,
+		})
+	}
+
+	return invoices, total, nil
+}
+
+func (r *InvoiceRepository) GetByID(id uint) (map[string]interface{}, error) {
+	query := `
+		SELECT i.id, i.invoice_number, i.student_id, i.programme_id, i.semester_id,
+		       i.total_amount, i.paid_amount, i.due_date, i.status, i.issued_at,
+		       u.full_name, s.student_number, p.name as programme, sem.name as semester
+		FROM invoices i
+		JOIN students s ON i.student_id = s.id
+		JOIN users u ON s.user_id = u.id
+		JOIN programmes p ON i.programme_id = p.id
+		JOIN semesters sem ON i.semester_id = sem.id
+		WHERE i.id = ?
+	`
+	var invoiceID uint
+	var studentID, programmeID, semesterID uint
+	var invoiceNumber string
+	var totalAmount, paidAmount int64
+	var dueDate string
+	var status string
+	var issuedAt sql.NullTime
+	var fullName, studentNumber, programme, semester string
+
+	err := r.db.QueryRow(query, id).Scan(&invoiceID, &invoiceNumber, &studentID, &programmeID, &semesterID,
+		&totalAmount, &paidAmount, &dueDate, &status, &issuedAt,
+		&fullName, &studentNumber, &programme, &semester)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errors.New("invoice not found")
+		}
+		return nil, err
+	}
+
+	balance := totalAmount - paidAmount
+
+	return map[string]interface{}{
+		"id":             invoiceID,
+		"invoice_number": invoiceNumber,
+		"student_id":     studentID,
+		"programme_id":   programmeID,
+		"semester_id":    semesterID,
+		"total_amount":   totalAmount,
+		"paid_amount":    paidAmount,
+		"balance":        balance,
+		"due_date":       dueDate,
+		"status":         status,
+		"issued_at":      issuedAt,
+		"full_name":      fullName,
+		"student_number": studentNumber,
+		"programme":      programme,
+		"semester":       semester,
+	}, nil
+}
+
+func (r *InvoiceRepository) Create(studentID, programmeID, semesterID, createdBy uint, dueDate string, totalAmount int64) (uint, error) {
+	invoiceNumber := generateInvoiceNumber(dueDate)
+
+	query := `
+		INSERT INTO invoices (invoice_number, student_id, programme_id, semester_id, due_date, total_amount, created_by)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`
+	result, err := r.db.Exec(query, invoiceNumber, studentID, programmeID, semesterID, dueDate, totalAmount, createdBy)
+	if err != nil {
+		return 0, err
+	}
+	id, _ := result.LastInsertId()
+	return uint(id), nil
+}
+
+func (r *InvoiceRepository) Update(id uint, dueDate string, totalAmount int64) error {
+	query := `
+		UPDATE invoices
+		SET due_date = ?, total_amount = ?
+		WHERE id = ? AND status = 'Draft'
+	`
+	result, err := r.db.Exec(query, dueDate, totalAmount, id)
 	if err != nil {
 		return err
 	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return err
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return errors.New("invoice not found or not in draft status")
 	}
-
-	invoice.ID = int(id)
 	return nil
 }
 
-func (r *InvoiceRepository) GetByID(id int) (*models.Invoice, error) {
-	query := `SELECT id, invoice_number, student_id, issue_date, due_date, subtotal, tax_amount,
-			  discount_amount, total_amount, paid_amount, outstanding_balance, status, notes,
-			  created_by, created_at, updated_at
-			  FROM invoices WHERE id = ?`
-
-	invoice := &models.Invoice{}
-	err := r.db.QueryRow(query, id).Scan(
-		&invoice.ID, &invoice.InvoiceNumber, &invoice.StudentID, &invoice.IssueDate,
-		&invoice.DueDate, &invoice.Subtotal, &invoice.TaxAmount, &invoice.DiscountAmount,
-		&invoice.TotalAmount, &invoice.PaidAmount, &invoice.OutstandingBalance, &invoice.Status,
-		&invoice.Notes, &invoice.CreatedBy, &invoice.CreatedAt, &invoice.UpdatedAt,
-	)
-
+func (r *InvoiceRepository) Issue(id uint) error {
+	query := `
+		UPDATE invoices
+		SET status = 'Issued', issued_at = NOW()
+		WHERE id = ? AND status = 'Draft'
+	`
+	result, err := r.db.Exec(query, id)
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	return invoice, nil
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return errors.New("invoice not found or not in draft status")
+	}
+	return nil
 }
 
-func (r *InvoiceRepository) GetByInvoiceNumber(invoiceNumber string) (*models.Invoice, error) {
-	query := `SELECT id, invoice_number, student_id, issue_date, due_date, subtotal, tax_amount,
-			  discount_amount, total_amount, paid_amount, outstanding_balance, status, notes,
-			  created_by, created_at, updated_at
-			  FROM invoices WHERE invoice_number = ?`
-
-	invoice := &models.Invoice{}
-	err := r.db.QueryRow(query, invoiceNumber).Scan(
-		&invoice.ID, &invoice.InvoiceNumber, &invoice.StudentID, &invoice.IssueDate,
-		&invoice.DueDate, &invoice.Subtotal, &invoice.TaxAmount, &invoice.DiscountAmount,
-		&invoice.TotalAmount, &invoice.PaidAmount, &invoice.OutstandingBalance, &invoice.Status,
-		&invoice.Notes, &invoice.CreatedBy, &invoice.CreatedAt, &invoice.UpdatedAt,
-	)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return invoice, nil
+func (r *InvoiceRepository) UpdateBalance(id uint, paidAmount int64, status string) error {
+	query := `
+		UPDATE invoices
+		SET paid_amount = paid_amount + ?, status = ?
+		WHERE id = ?
+	`
+	_, err := r.db.Exec(query, paidAmount, status, id)
+	return err
 }
 
-func (r *InvoiceRepository) GetByStudentID(studentID int, limit, offset int) ([]models.Invoice, error) {
-	query := `SELECT id, invoice_number, student_id, issue_date, due_date, subtotal, tax_amount,
-			  discount_amount, total_amount, paid_amount, outstanding_balance, status, notes,
-			  created_by, created_at, updated_at
-			  FROM invoices WHERE student_id = ? ORDER BY issue_date DESC LIMIT ? OFFSET ?`
+func generateInvoiceNumber(dueDate string) string {
+	return "INV-" + dueDate[2:4] + "-" + utils.RandomString(4)
+}
 
-	rows, err := r.db.Query(query, studentID, limit, offset)
+func (r *InvoiceRepository) GetNextInvoiceNumber() (string, error) {
+	var maxNum int
+	query := `SELECT CAST(SUBSTRING(invoice_number, 10) AS UNSIGNED) as num FROM invoices WHERE invoice_number LIKE 'INV-%-%' ORDER BY num DESC LIMIT 1`
+	err := r.db.QueryRow(query).Scan(&maxNum)
 	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var invoices []models.Invoice
-	for rows.Next() {
-		var invoice models.Invoice
-		err := rows.Scan(
-			&invoice.ID, &invoice.InvoiceNumber, &invoice.StudentID, &invoice.IssueDate,
-			&invoice.DueDate, &invoice.Subtotal, &invoice.TaxAmount, &invoice.DiscountAmount,
-			&invoice.TotalAmount, &invoice.PaidAmount, &invoice.OutstandingBalance, &invoice.Status,
-			&invoice.Notes, &invoice.CreatedBy, &invoice.CreatedAt, &invoice.UpdatedAt,
-		)
-		if err != nil {
-			return nil, err
+		if errors.Is(err, sql.ErrNoRows) {
+			return "INV-26-0001", nil
 		}
-		invoices = append(invoices, invoice)
+		return "", err
 	}
-
-	return invoices, nil
+	nextNum := maxNum + 1
+	return fmt.Sprintf("INV-26-%04d", nextNum), nil
 }
 
-func (r *InvoiceRepository) List(limit, offset int) ([]models.Invoice, error) {
-	query := `SELECT id, invoice_number, student_id, issue_date, due_date, subtotal, tax_amount,
-			  discount_amount, total_amount, paid_amount, outstanding_balance, status, notes,
-			  created_by, created_at, updated_at
-			  FROM invoices ORDER BY issue_date DESC LIMIT ? OFFSET ?`
+func (r *InvoiceRepository) UpdateBalanceInTx(tx *sql.Tx, id uint, paidAmount int64) error {
+	query := `
+		UPDATE invoices
+		SET paid_amount = paid_amount + ?,
+		    status = CASE
+		        WHEN paid_amount + ? >= total_amount THEN 'Paid'
+		        WHEN paid_amount + ? > 0 THEN 'Partially Paid'
+		        ELSE status
+		    END
+		WHERE id = ?
+	`
+	_, err := tx.Exec(query, paidAmount, paidAmount, paidAmount, id)
+	return err
+}
 
-	rows, err := r.db.Query(query, limit, offset)
+func (r *InvoiceRepository) GetByIDInTx(tx *sql.Tx, id uint) (map[string]interface{}, error) {
+	query := `
+		SELECT i.id, i.invoice_number, i.student_id, i.programme_id, i.semester_id,
+		       i.total_amount, i.paid_amount, i.due_date, i.status, i.issued_at,
+		       u.full_name, s.student_number, p.name as programme, sem.name as semester
+		FROM invoices i
+		JOIN students s ON i.student_id = s.id
+		JOIN users u ON s.user_id = u.id
+		JOIN programmes p ON i.programme_id = p.id
+		JOIN semesters sem ON i.semester_id = sem.id
+		WHERE i.id = ?
+	`
+	var invoiceID uint
+	var studentID, programmeID, semesterID uint
+	var invoiceNumber string
+	var totalAmount, paidAmount int64
+	var dueDate string
+	var status string
+	var issuedAt sql.NullTime
+	var fullName, studentNumber, programme, semester string
+
+	err := tx.QueryRow(query, id).Scan(&invoiceID, &invoiceNumber, &studentID, &programmeID, &semesterID,
+		&totalAmount, &paidAmount, &dueDate, &status, &issuedAt,
+		&fullName, &studentNumber, &programme, &semester)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errors.New("invoice not found")
+		}
 		return nil, err
 	}
-	defer rows.Close()
 
-	var invoices []models.Invoice
-	for rows.Next() {
-		var invoice models.Invoice
-		err := rows.Scan(
-			&invoice.ID, &invoice.InvoiceNumber, &invoice.StudentID, &invoice.IssueDate,
-			&invoice.DueDate, &invoice.Subtotal, &invoice.TaxAmount, &invoice.DiscountAmount,
-			&invoice.TotalAmount, &invoice.PaidAmount, &invoice.OutstandingBalance, &invoice.Status,
-			&invoice.Notes, &invoice.CreatedBy, &invoice.CreatedAt, &invoice.UpdatedAt,
-		)
-		if err != nil {
-			return nil, err
-		}
-		invoices = append(invoices, invoice)
-	}
+	balance := totalAmount - paidAmount
 
-	return invoices, nil
-}
-
-func (r *InvoiceRepository) Update(invoice *models.Invoice) error {
-	query := `UPDATE invoices SET due_date = ?, discount_amount = ?, status = ?, 
-			  notes = ?, updated_at = NOW() WHERE id = ?`
-
-	_, err := r.db.Exec(query, invoice.DueDate, invoice.DiscountAmount, invoice.Status,
-		invoice.Notes, invoice.ID)
-	return err
-}
-
-func (r *InvoiceRepository) UpdatePaymentAmounts(invoiceID int, paidAmount, outstandingBalance float64) error {
-	query := `UPDATE invoices SET paid_amount = ?, outstanding_balance = ?, 
-			  updated_at = NOW() WHERE id = ?`
-
-	_, err := r.db.Exec(query, paidAmount, outstandingBalance, invoiceID)
-	return err
-}
-
-func (r *InvoiceRepository) UpdateInvoiceStatus(invoiceID int, status models.InvoiceStatus) error {
-	query := `UPDATE invoices SET status = ?, updated_at = NOW() WHERE id = ?`
-
-	_, err := r.db.Exec(query, status, invoiceID)
-	return err
-}
-
-func (r *InvoiceRepository) Delete(id int) error {
-	query := `DELETE FROM invoices WHERE id = ?`
-	_, err := r.db.Exec(query, id)
-	return err
+	return map[string]interface{}{
+		"id":             invoiceID,
+		"invoice_number": invoiceNumber,
+		"student_id":     studentID,
+		"programme_id":   programmeID,
+		"semester_id":    semesterID,
+		"total_amount":   totalAmount,
+		"paid_amount":    paidAmount,
+		"balance":        balance,
+		"due_date":       dueDate,
+		"status":         status,
+		"issued_at":      issuedAt,
+		"full_name":      fullName,
+		"student_number": studentNumber,
+		"programme":      programme,
+		"semester":       semester,
+	}, nil
 }

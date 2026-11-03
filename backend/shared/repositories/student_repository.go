@@ -2,8 +2,7 @@ package repositories
 
 import (
 	"database/sql"
-
-	"github.com/kwizera/university-invoices/services/student/models"
+	"errors"
 )
 
 type StudentRepository struct {
@@ -14,106 +13,54 @@ func NewStudentRepository(db *sql.DB) *StudentRepository {
 	return &StudentRepository{db: db}
 }
 
-func (r *StudentRepository) Create(student *models.Student) error {
-	query := `INSERT INTO students (student_id, first_name, last_name, email, phone, program, 
-			  semester, year, date_of_birth, address, is_active)
-			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+func (r *StudentRepository) GetStudentByUserID(userID uint) (uint, string, uint, error) {
+	var id uint
+	var studentNumber string
+	var programmeID uint
 
-	result, err := r.db.Exec(query, student.StudentID, student.FirstName, student.LastName,
-		student.Email, student.Phone, student.Program, student.Semester, student.Year,
-		student.DateOfBirth, student.Address, student.IsActive)
+	query := `SELECT id, student_number, programme_id FROM students WHERE user_id = ?`
+	err := r.db.QueryRow(query, userID).Scan(&id, &studentNumber, &programmeID)
 	if err != nil {
-		return err
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, "", 0, errors.New("student not found")
+		}
+		return 0, "", 0, err
 	}
 
-	id, err := result.LastInsertId()
-	if err != nil {
-		return err
-	}
-
-	student.ID = int(id)
-	return nil
+	return id, studentNumber, programmeID, nil
 }
 
-func (r *StudentRepository) GetByID(id int) (*models.Student, error) {
-	query := `SELECT id, student_id, first_name, last_name, email, phone, program, semester, year,
-			  date_of_birth, address, is_active, created_at, updated_at
-			  FROM students WHERE id = ?`
+func (r *StudentRepository) SearchStudents(queryStr string, limit int) ([]map[string]interface{}, error) {
+	query := `
+		SELECT s.id, s.student_number, u.full_name, u.email, p.name as programme
+		FROM students s
+		JOIN users u ON s.user_id = u.id
+		JOIN programmes p ON s.programme_id = p.id
+		WHERE s.student_number LIKE ? OR u.full_name LIKE ?
+		LIMIT ?
+	`
 
-	student := &models.Student{}
-	err := r.db.QueryRow(query, id).Scan(
-		&student.ID, &student.StudentID, &student.FirstName, &student.LastName,
-		&student.Email, &student.Phone, &student.Program, &student.Semester, &student.Year,
-		&student.DateOfBirth, &student.Address, &student.IsActive, &student.CreatedAt, &student.UpdatedAt,
-	)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return student, nil
-}
-
-func (r *StudentRepository) GetByStudentID(studentID string) (*models.Student, error) {
-	query := `SELECT id, student_id, first_name, last_name, email, phone, program, semester, year,
-			  date_of_birth, address, is_active, created_at, updated_at
-			  FROM students WHERE student_id = ?`
-
-	student := &models.Student{}
-	err := r.db.QueryRow(query, studentID).Scan(
-		&student.ID, &student.StudentID, &student.FirstName, &student.LastName,
-		&student.Email, &student.Phone, &student.Program, &student.Semester, &student.Year,
-		&student.DateOfBirth, &student.Address, &student.IsActive, &student.CreatedAt, &student.UpdatedAt,
-	)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return student, nil
-}
-
-func (r *StudentRepository) List(limit, offset int) ([]models.Student, error) {
-	query := `SELECT id, student_id, first_name, last_name, email, phone, program, semester, year,
-			  date_of_birth, address, is_active, created_at, updated_at
-			  FROM students LIMIT ? OFFSET ?`
-
-	rows, err := r.db.Query(query, limit, offset)
+	rows, err := r.db.Query(query, "%"+queryStr+"%", "%"+queryStr+"%", limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var students []models.Student
+	var students []map[string]interface{}
 	for rows.Next() {
-		var student models.Student
-		err := rows.Scan(
-			&student.ID, &student.StudentID, &student.FirstName, &student.LastName,
-			&student.Email, &student.Phone, &student.Program, &student.Semester, &student.Year,
-			&student.DateOfBirth, &student.Address, &student.IsActive, &student.CreatedAt, &student.UpdatedAt,
-		)
-		if err != nil {
+		var id uint
+		var studentNumber, fullName, email, programme string
+		if err := rows.Scan(&id, &studentNumber, &fullName, &email, &programme); err != nil {
 			return nil, err
 		}
-		students = append(students, student)
+		students = append(students, map[string]interface{}{
+			"id":             id,
+			"student_number": studentNumber,
+			"full_name":      fullName,
+			"email":          email,
+			"programme":      programme,
+		})
 	}
 
 	return students, nil
-}
-
-func (r *StudentRepository) Update(student *models.Student) error {
-	query := `UPDATE students SET first_name = ?, last_name = ?, email = ?, phone = ?, 
-			  program = ?, semester = ?, year = ?, date_of_birth = ?, address = ?, 
-			  is_active = ?, updated_at = NOW() WHERE id = ?`
-
-	_, err := r.db.Exec(query, student.FirstName, student.LastName, student.Email, student.Phone,
-		student.Program, student.Semester, student.Year, student.DateOfBirth, student.Address,
-		student.IsActive, student.ID)
-	return err
-}
-
-func (r *StudentRepository) Delete(id int) error {
-	query := `DELETE FROM students WHERE id = ?`
-	_, err := r.db.Exec(query, id)
-	return err
 }

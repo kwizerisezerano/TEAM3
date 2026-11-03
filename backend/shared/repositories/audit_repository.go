@@ -2,8 +2,7 @@ package repositories
 
 import (
 	"database/sql"
-
-	"github.com/kwizera/university-invoices/services/user/models"
+	"time"
 )
 
 type AuditRepository struct {
@@ -14,99 +13,117 @@ func NewAuditRepository(db *sql.DB) *AuditRepository {
 	return &AuditRepository{db: db}
 }
 
-func (r *AuditRepository) Create(audit *models.AuditLog) error {
-	query := `INSERT INTO audit_logs (user_id, action, entity, entity_id, old_value, new_value, ip_address, user_agent)
-			  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-
-	result, err := r.db.Exec(query, audit.UserID, audit.Action, audit.Entity, audit.EntityID,
-		audit.OldValue, audit.NewValue, audit.IPAddress, audit.UserAgent)
-	if err != nil {
-		return err
+func (r *AuditRepository) Log(actorType string, actorID *uint, action, recordType, recordRef, oldValue, newValue string) error {
+	query := `
+		INSERT INTO audit_logs (actor_type, actor_id, action, record_type, record_ref, old_value, new_value)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`
+	var actorIDVal interface{}
+	if actorID != nil {
+		actorIDVal = *actorID
+	} else {
+		actorIDVal = nil
 	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return err
-	}
-
-	audit.ID = int(id)
-	return nil
+	_, err := r.db.Exec(query, actorType, actorIDVal, action, recordType, recordRef, oldValue, newValue)
+	return err
 }
 
-func (r *AuditRepository) GetByEntity(entity string, entityID int, limit, offset int) ([]models.AuditLog, error) {
-	query := `SELECT id, user_id, action, entity, entity_id, old_value, new_value, ip_address, user_agent, created_at
-			  FROM audit_logs WHERE entity = ? AND entity_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`
+func (r *AuditRepository) LogInTx(tx *sql.Tx, actorType string, actorID *uint, action, recordType, recordRef, oldValue, newValue string) error {
+	query := `
+		INSERT INTO audit_logs (actor_type, actor_id, action, record_type, record_ref, old_value, new_value)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`
+	var actorIDVal interface{}
+	if actorID != nil {
+		actorIDVal = *actorID
+	} else {
+		actorIDVal = nil
+	}
+	_, err := tx.Exec(query, actorType, actorIDVal, action, recordType, recordRef, oldValue, newValue)
+	return err
+}
 
-	rows, err := r.db.Query(query, entity, entityID, limit, offset)
+func (r *AuditRepository) List(recordType, recordRef string, page, pageSize int) ([]map[string]interface{}, int, error) {
+	offset := (page - 1) * pageSize
+
+	query := `
+		SELECT id, actor_type, actor_id, action, record_type, record_ref, old_value, new_value, created_at
+		FROM audit_logs
+		WHERE 1=1
+	`
+	var args []interface{}
+
+	if recordType != "" {
+		query += " AND record_type = ?"
+		args = append(args, recordType)
+	}
+
+	if recordRef != "" {
+		query += " AND record_ref = ?"
+		args = append(args, recordRef)
+	}
+
+	countQuery := "SELECT COUNT(*) FROM audit_logs WHERE 1=1"
+	var total int
+	countArgs := args
+	if recordType != "" {
+		countQuery += " AND record_type = ?"
+	}
+	if recordRef != "" {
+		countQuery += " AND record_ref = ?"
+	}
+	if err := r.db.QueryRow(countQuery, countArgs...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+	args = append(args, pageSize, offset)
+
+	rows, err := r.db.Query(query, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
-	var audits []models.AuditLog
+	var logs []map[string]interface{}
 	for rows.Next() {
-		var audit models.AuditLog
-		err := rows.Scan(
-			&audit.ID, &audit.UserID, &audit.Action, &audit.Entity, &audit.EntityID,
-			&audit.OldValue, &audit.NewValue, &audit.IPAddress, &audit.UserAgent, &audit.CreatedAt,
-		)
-		if err != nil {
-			return nil, err
+		var id uint
+		var actorType, action, recordType, recordRef string
+		var actorID sql.NullInt64
+		var oldValue, newValue sql.NullString
+		var createdAt time.Time
+
+		if err := rows.Scan(&id, &actorType, &actorID, &action, &recordType, &recordRef,
+			&oldValue, &newValue, &createdAt); err != nil {
+			return nil, 0, err
 		}
-		audits = append(audits, audit)
-	}
 
-	return audits, nil
-}
-
-func (r *AuditRepository) GetByUserID(userID int, limit, offset int) ([]models.AuditLog, error) {
-	query := `SELECT id, user_id, action, entity, entity_id, old_value, new_value, ip_address, user_agent, created_at
-			  FROM audit_logs WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`
-
-	rows, err := r.db.Query(query, userID, limit, offset)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var audits []models.AuditLog
-	for rows.Next() {
-		var audit models.AuditLog
-		err := rows.Scan(
-			&audit.ID, &audit.UserID, &audit.Action, &audit.Entity, &audit.EntityID,
-			&audit.OldValue, &audit.NewValue, &audit.IPAddress, &audit.UserAgent, &audit.CreatedAt,
-		)
-		if err != nil {
-			return nil, err
+		var actorIDVal *uint
+		if actorID.Valid {
+			aid := uint(actorID.Int64)
+			actorIDVal = &aid
 		}
-		audits = append(audits, audit)
-	}
 
-	return audits, nil
-}
-
-func (r *AuditRepository) List(limit, offset int) ([]models.AuditLog, error) {
-	query := `SELECT id, user_id, action, entity, entity_id, old_value, new_value, ip_address, user_agent, created_at
-			  FROM audit_logs ORDER BY created_at DESC LIMIT ? OFFSET ?`
-
-	rows, err := r.db.Query(query, limit, offset)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var audits []models.AuditLog
-	for rows.Next() {
-		var audit models.AuditLog
-		err := rows.Scan(
-			&audit.ID, &audit.UserID, &audit.Action, &audit.Entity, &audit.EntityID,
-			&audit.OldValue, &audit.NewValue, &audit.IPAddress, &audit.UserAgent, &audit.CreatedAt,
-		)
-		if err != nil {
-			return nil, err
+		var oldValueVal, newValueVal *string
+		if oldValue.Valid {
+			oldValueVal = &oldValue.String
 		}
-		audits = append(audits, audit)
+		if newValue.Valid {
+			newValueVal = &newValue.String
+		}
+
+		logs = append(logs, map[string]interface{}{
+			"id":          id,
+			"actor_type":  actorType,
+			"actor_id":    actorIDVal,
+			"action":      action,
+			"record_type": recordType,
+			"record_ref":  recordRef,
+			"old_value":   oldValueVal,
+			"new_value":   newValueVal,
+			"created_at":  createdAt,
+		})
 	}
 
-	return audits, nil
+	return logs, total, nil
 }

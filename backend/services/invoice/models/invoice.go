@@ -5,69 +5,66 @@ import "time"
 type InvoiceStatus string
 
 const (
-	InvoiceStatusDraft     InvoiceStatus = "draft"
-	InvoiceStatusPending   InvoiceStatus = "pending"
-	InvoiceStatusPartial   InvoiceStatus = "partial"
-	InvoiceStatusPaid      InvoiceStatus = "paid"
-	InvoiceStatusOverdue   InvoiceStatus = "overdue"
-	InvoiceStatusCancelled InvoiceStatus = "cancelled"
+	InvoiceStatusDraft         InvoiceStatus = "Draft"
+	InvoiceStatusIssued        InvoiceStatus = "Issued"
+	InvoiceStatusPartiallyPaid InvoiceStatus = "Partially Paid"
+	InvoiceStatusPaid          InvoiceStatus = "Paid"
+	InvoiceStatusOverdue       InvoiceStatus = "Overdue"
 )
 
+type InvoiceRow struct {
+	ID            uint          `json:"id"`
+	InvoiceNumber string        `json:"invoice_number"`
+	Student       StudentInfo   `json:"student"`
+	Description   string        `json:"description"`
+	TotalAmount   int64         `json:"total_amount"`
+	Balance       int64         `json:"balance"`
+	DueDate       string        `json:"due_date"`
+	Status        InvoiceStatus `json:"status"`
+}
+
 type Invoice struct {
-	ID                int           `json:"id"`
-	InvoiceNumber     string        `json:"invoice_number"`
-	StudentID         int           `json:"student_id"`
-	IssueDate         time.Time     `json:"issue_date"`
-	DueDate           time.Time     `json:"due_date"`
-	Subtotal          float64       `json:"subtotal"`
-	TaxAmount         float64       `json:"tax_amount"`
-	DiscountAmount    float64       `json:"discount_amount"`
-	TotalAmount       float64       `json:"total_amount"`
-	PaidAmount        float64       `json:"paid_amount"`
-	OutstandingBalance float64      `json:"outstanding_balance"`
-	Status            InvoiceStatus `json:"status"`
-	Notes             string        `json:"notes"`
-	CreatedBy         int           `json:"created_by"`
-	CreatedAt         time.Time     `json:"created_at"`
-	UpdatedAt         time.Time     `json:"updated_at"`
+	ID            uint                     `json:"id"`
+	InvoiceNumber string                   `json:"invoice_number"`
+	Student       StudentInfo              `json:"student"`
+	Programme     string                   `json:"programme"`
+	Semester      string                   `json:"semester"`
+	Items         []InvoiceItem            `json:"items"`
+	TotalAmount   int64                    `json:"total_amount"`
+	PaidAmount    int64                    `json:"paid_amount"`
+	Balance       int64                    `json:"balance"`
+	DueDate       string                   `json:"due_date"`
+	IssuedAt      *time.Time               `json:"issued_at,omitempty"`
+	Status        InvoiceStatus            `json:"status"`
+	Payments      []map[string]interface{} `json:"payments,omitempty"`
+}
+
+type StudentInfo struct {
+	ID            uint   `json:"id"`
+	FullName      string `json:"full_name"`
+	StudentNumber string `json:"student_number"`
 }
 
 type InvoiceItem struct {
-	ID          int       `json:"id"`
-	InvoiceID   int       `json:"invoice_id"`
-	FeeTypeID   int       `json:"fee_type_id"`
-	Description string    `json:"description"`
-	Quantity    int       `json:"quantity"`
-	UnitPrice   float64   `json:"unit_price"`
-	Amount      float64   `json:"amount"`
-	CreatedAt   time.Time `json:"created_at"`
+	FeeTypeID uint   `json:"fee_type_id"`
+	FeeName   string `json:"fee_name"`
+	Amount    int64  `json:"amount"`
 }
 
-type CreateInvoiceRequest struct {
-	StudentID      int                 `json:"student_id" binding:"required"`
-	IssueDate      time.Time           `json:"issue_date" binding:"required"`
-	DueDate        time.Time           `json:"due_date" binding:"required"`
-	Items          []CreateInvoiceItem `json:"items" binding:"required,min=1"`
-	TaxRate        float64             `json:"tax_rate"`
-	DiscountAmount float64             `json:"discount_amount"`
-	Notes          string              `json:"notes"`
+type InvoiceInput struct {
+	StudentID   uint               `json:"student_id" validate:"required"`
+	ProgrammeID uint               `json:"programme_id" validate:"required"`
+	SemesterID  uint               `json:"semester_id" validate:"required"`
+	DueDate     string             `json:"due_date" validate:"required"`
+	Items       []InvoiceItemInput `json:"items" validate:"required,min=1"`
+	Action      string             `json:"action" validate:"oneof=draft issue"`
 }
 
-type CreateInvoiceItem struct {
-	FeeTypeID   int     `json:"fee_type_id" binding:"required"`
-	Description string `json:"description" binding:"required"`
-	Quantity    int     `json:"quantity" binding:"required,min=1"`
-	UnitPrice   float64 `json:"unit_price" binding:"required,gt=0"`
+type InvoiceItemInput struct {
+	FeeTypeID uint  `json:"fee_type_id" validate:"required"`
+	Amount    int64 `json:"amount" validate:"required,gt=0"`
 }
 
-type UpdateInvoiceRequest struct {
-	DueDate        *time.Time    `json:"due_date"`
-	DiscountAmount *float64      `json:"discount_amount"`
-	Notes          *string       `json:"notes"`
-	Status         *InvoiceStatus `json:"status"`
-}
-
-type InvoiceWithItems struct {
-	Invoice
-	Items []InvoiceItem `json:"items"`
+type IssueInvoiceRequest struct {
+	Action string `json:"action" validate:"required,oneof=issue"`
 }

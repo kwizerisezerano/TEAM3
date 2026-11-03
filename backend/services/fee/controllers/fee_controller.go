@@ -1,75 +1,34 @@
 package controllers
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strconv"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-playground/validator/v10"
+
 	"github.com/kwizera/university-invoices/services/fee/models"
 	"github.com/kwizera/university-invoices/shared/repositories"
 )
 
 type FeeController struct {
-	feeRepo *repositories.FeeRepository
+	feeRepo   *repositories.FeeTypeRepository
+	validator *validator.Validate
 }
 
-func NewFeeController(feeRepo *repositories.FeeRepository) *FeeController {
-	return &FeeController{feeRepo: feeRepo}
-}
-
-func (c *FeeController) CreateFeeType(w http.ResponseWriter, r *http.Request) {
-	var req models.CreateFeeTypeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
+func NewFeeController(db *sql.DB) *FeeController {
+	return &FeeController{
+		feeRepo:   repositories.NewFeeTypeRepository(db),
+		validator: validator.New(),
 	}
-
-	feeType := &models.FeeType{
-		Name:        req.Name,
-		Description: req.Description,
-		Amount:      req.Amount,
-		Currency:    req.Currency,
-		IsRecurring: req.IsRecurring,
-		IsActive:    true,
-	}
-
-	if err := c.feeRepo.Create(feeType); err != nil {
-		http.Error(w, "Failed to create fee type", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(feeType)
-}
-
-func (c *FeeController) GetFeeType(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.Atoi(r.URL.Query().Get("id"))
-	if err != nil {
-		http.Error(w, "Invalid fee type ID", http.StatusBadRequest)
-		return
-	}
-
-	feeType, err := c.feeRepo.GetByID(id)
-	if err != nil {
-		http.Error(w, "Fee type not found", http.StatusNotFound)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(feeType)
 }
 
 func (c *FeeController) ListFeeTypes(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-
-	if limit == 0 {
-		limit = 50
-	}
-
-	feeTypes, err := c.feeRepo.List(limit, offset)
+	feeTypes, err := c.feeRepo.ListAll()
 	if err != nil {
-		http.Error(w, "Failed to list fee types", http.StatusInternalServerError)
+		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to fetch fee types"}`, http.StatusInternalServerError)
 		return
 	}
 
@@ -77,46 +36,12 @@ func (c *FeeController) ListFeeTypes(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(feeTypes)
 }
 
-func (c *FeeController) UpdateFeeType(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.Atoi(r.URL.Query().Get("id"))
+func (c *FeeController) GetFeeType(w http.ResponseWriter, r *http.Request) {
+	feeTypeID, _ := strconv.ParseUint(chi.URLParam(r, "feeTypeId"), 10, 32)
+
+	feeType, err := c.feeRepo.GetByID(uint(feeTypeID))
 	if err != nil {
-		http.Error(w, "Invalid fee type ID", http.StatusBadRequest)
-		return
-	}
-
-	var req models.UpdateFeeTypeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	feeType, err := c.feeRepo.GetByID(id)
-	if err != nil {
-		http.Error(w, "Fee type not found", http.StatusNotFound)
-		return
-	}
-
-	if req.Name != nil {
-		feeType.Name = *req.Name
-	}
-	if req.Description != nil {
-		feeType.Description = *req.Description
-	}
-	if req.Amount != nil {
-		feeType.Amount = *req.Amount
-	}
-	if req.Currency != nil {
-		feeType.Currency = *req.Currency
-	}
-	if req.IsRecurring != nil {
-		feeType.IsRecurring = *req.IsRecurring
-	}
-	if req.IsActive != nil {
-		feeType.IsActive = *req.IsActive
-	}
-
-	if err := c.feeRepo.Update(feeType); err != nil {
-		http.Error(w, "Failed to update fee type", http.StatusInternalServerError)
+		http.Error(w, `{"code":"NOT_FOUND","message":"Fee type not found"}`, http.StatusNotFound)
 		return
 	}
 
@@ -124,17 +49,55 @@ func (c *FeeController) UpdateFeeType(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(feeType)
 }
 
-func (c *FeeController) DeleteFeeType(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.Atoi(r.URL.Query().Get("id"))
+func (c *FeeController) CreateFeeType(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value("userID").(uint)
+
+	var req models.CreateFeeTypeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"code":"VALIDATION_ERROR","message":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := c.validator.Struct(&req); err != nil {
+		http.Error(w, `{"code":"VALIDATION_ERROR","message":"One or more fields are invalid"}`, http.StatusBadRequest)
+		return
+	}
+
+	feeTypeID, err := c.feeRepo.Create(req.Name, req.ProgrammeID, req.SemesterID, userID, req.Amount, req.EffectiveFrom)
 	if err != nil {
-		http.Error(w, "Invalid fee type ID", http.StatusBadRequest)
+		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to create fee type"}`, http.StatusInternalServerError)
 		return
 	}
 
-	if err := c.feeRepo.Delete(id); err != nil {
-		http.Error(w, "Failed to delete fee type", http.StatusInternalServerError)
+	feeType, _ := c.feeRepo.GetByID(feeTypeID)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(feeType)
+}
+
+func (c *FeeController) UpdateFeeType(w http.ResponseWriter, r *http.Request) {
+	feeTypeID, _ := strconv.ParseUint(chi.URLParam(r, "feeTypeId"), 10, 32)
+
+	var req models.UpdateFeeTypeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"code":"VALIDATION_ERROR","message":"Invalid request body"}`, http.StatusBadRequest)
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	if err := c.validator.Struct(&req); err != nil {
+		http.Error(w, `{"code":"VALIDATION_ERROR","message":"One or more fields are invalid"}`, http.StatusBadRequest)
+		return
+	}
+
+	err := c.feeRepo.Update(uint(feeTypeID), req.Name, req.Amount, req.EffectiveFrom)
+	if err != nil {
+		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to update fee type"}`, http.StatusInternalServerError)
+		return
+	}
+
+	feeType, _ := c.feeRepo.GetByID(uint(feeTypeID))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(feeType)
 }
