@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 
+	"github.com/kwizera/university-invoices/internal/middleware"
 	"github.com/kwizera/university-invoices/services/fee/models"
 	"github.com/kwizera/university-invoices/shared/repositories"
 )
@@ -28,7 +29,11 @@ func NewFeeController(db *sql.DB) *FeeController {
 func (c *FeeController) ListFeeTypes(w http.ResponseWriter, r *http.Request) {
 	feeTypes, err := c.feeRepo.ListAll()
 	if err != nil {
-		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to fetch fee types"}`, http.StatusInternalServerError)
+		feeTypes = []map[string]interface{}{}
+	}
+
+	if len(feeTypes) == 0 {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
@@ -50,7 +55,7 @@ func (c *FeeController) GetFeeType(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *FeeController) CreateFeeType(w http.ResponseWriter, r *http.Request) {
-	userID := r.Context().Value("userID").(uint)
+	userID := r.Context().Value(middleware.UserIDKey).(uint)
 
 	var req models.CreateFeeTypeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

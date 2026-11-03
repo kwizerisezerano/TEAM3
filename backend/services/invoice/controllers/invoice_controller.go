@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 
+	"github.com/kwizera/university-invoices/internal/middleware"
 	"github.com/kwizera/university-invoices/services/invoice/models"
 	"github.com/kwizera/university-invoices/shared/repositories"
 )
@@ -30,8 +32,8 @@ func NewInvoiceController(db *sql.DB) *InvoiceController {
 }
 
 func (c *InvoiceController) ListInvoices(w http.ResponseWriter, r *http.Request) {
-	userID := r.Context().Value("userID").(uint)
-	role := r.Context().Value("userRole").(string)
+	userID := r.Context().Value(middleware.UserIDKey).(uint)
+	role := r.Context().Value(middleware.UserRoleKey).(string)
 
 	var studentID uint
 	if role == "student" {
@@ -42,6 +44,7 @@ func (c *InvoiceController) ListInvoices(w http.ResponseWriter, r *http.Request)
 		}
 		studentID = sid
 	}
+	// Finance and admin can see all invoices (studentID = 0 means no filter)
 
 	status := r.URL.Query().Get("status")
 	semesterID := r.URL.Query().Get("semester_id")
@@ -61,7 +64,12 @@ func (c *InvoiceController) ListInvoices(w http.ResponseWriter, r *http.Request)
 
 	invoices, total, err := c.invoiceRepo.List(studentID, status, semesterID, programmeID, queryStr, from, to, page, pageSize)
 	if err != nil {
-		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to fetch invoices"}`, http.StatusInternalServerError)
+		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to fetch invoices: `+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if len(invoices) == 0 {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
@@ -78,8 +86,8 @@ func (c *InvoiceController) ListInvoices(w http.ResponseWriter, r *http.Request)
 
 func (c *InvoiceController) GetInvoice(w http.ResponseWriter, r *http.Request) {
 	invoiceID, _ := strconv.ParseUint(chi.URLParam(r, "invoiceId"), 10, 32)
-	userID := r.Context().Value("userID").(uint)
-	role := r.Context().Value("userRole").(string)
+	userID := r.Context().Value(middleware.UserIDKey).(uint)
+	role := r.Context().Value(middleware.UserRoleKey).(string)
 
 	invoice, err := c.invoiceRepo.GetByID(uint(invoiceID))
 	if err != nil {
@@ -108,7 +116,14 @@ func (c *InvoiceController) GetInvoice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *InvoiceController) CreateInvoice(w http.ResponseWriter, r *http.Request) {
-	userID := r.Context().Value("userID").(uint)
+	userID := r.Context().Value(middleware.UserIDKey).(uint)
+	role := r.Context().Value(middleware.UserRoleKey).(string)
+
+	// Only finance can create invoices
+	if role != "finance" {
+		http.Error(w, `{"code":"FORBIDDEN","message":"Only finance can create invoices"}`, http.StatusForbidden)
+		return
+	}
 
 	var req models.InvoiceInput
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -128,6 +143,16 @@ func (c *InvoiceController) CreateInvoice(w http.ResponseWriter, r *http.Request
 
 	invoiceID, err := c.invoiceRepo.Create(req.StudentID, req.ProgrammeID, req.SemesterID, userID, req.DueDate, totalAmount)
 	if err != nil {
+		// Check for foreign key constraint or duplicate errors
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "1452") || strings.Contains(errMsg, "foreign key constraint") {
+			http.Error(w, `{"code":"CONFLICT","message":"Invalid reference: student, programme, or semester not found"}`, http.StatusConflict)
+			return
+		}
+		if strings.Contains(errMsg, "1062") || strings.Contains(errMsg, "Duplicate entry") {
+			http.Error(w, `{"code":"CONFLICT","message":"Invoice number already exists"}`, http.StatusConflict)
+			return
+		}
 		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to create invoice"}`, http.StatusInternalServerError)
 		return
 	}
@@ -170,11 +195,7 @@ func (c *InvoiceController) UpdateInvoice(w http.ResponseWriter, r *http.Request
 
 	err := c.invoiceRepo.Update(uint(invoiceID), req.DueDate, totalAmount)
 	if err != nil {
-		if err.Error() == "invoice not found or not in draft status" {
-			http.Error(w, `{"code":"CONFLICT","message":"Invoice is not a draft"}`, http.StatusConflict)
-			return
-		}
-		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to update invoice"}`, http.StatusInternalServerError)
+		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to update invoice: `+err.Error()+`"}`, http.StatusInternalServerError)
 		return
 	}
 
@@ -192,6 +213,14 @@ func (c *InvoiceController) UpdateInvoice(w http.ResponseWriter, r *http.Request
 }
 
 func (c *InvoiceController) IssueInvoice(w http.ResponseWriter, r *http.Request) {
+	role := r.Context().Value(middleware.UserRoleKey).(string)
+
+	// Only finance can issue invoices
+	if role != "finance" {
+		http.Error(w, `{"code":"FORBIDDEN","message":"Only finance can issue invoices"}`, http.StatusForbidden)
+		return
+	}
+
 	invoiceID, _ := strconv.ParseUint(chi.URLParam(r, "invoiceId"), 10, 32)
 
 	err := c.invoiceRepo.Issue(uint(invoiceID))

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/kwizera/university-invoices/internal/middleware"
 	"github.com/kwizera/university-invoices/shared/repositories"
 )
 
@@ -25,7 +26,7 @@ func NewStudentController(db *sql.DB) *StudentController {
 }
 
 func (c *StudentController) GetDashboard(w http.ResponseWriter, r *http.Request) {
-	userID := r.Context().Value("userID").(uint)
+	userID := r.Context().Value(middleware.UserIDKey).(uint)
 	studentID, _, _, err := c.studentRepo.GetStudentByUserID(userID)
 	if err != nil {
 		http.Error(w, `{"code":"NOT_FOUND","message":"Student not found"}`, http.StatusNotFound)
@@ -40,13 +41,17 @@ func (c *StudentController) GetDashboard(w http.ResponseWriter, r *http.Request)
 
 	invoices, _, err := c.invoiceRepo.List(studentID, "", "", "", "", "", "", 1, 5)
 	if err != nil {
-		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to fetch invoices"}`, http.StatusInternalServerError)
-		return
+		invoices = []map[string]interface{}{}
 	}
 
 	payments, _, err := c.paymentRepo.List(studentID, "", 1, 1)
 	if err != nil {
-		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to fetch payments"}`, http.StatusInternalServerError)
+		payments = []map[string]interface{}{}
+	}
+
+	// If no invoices and no payments, return 204 No Content
+	if len(invoices) == 0 && len(payments) == 0 {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 

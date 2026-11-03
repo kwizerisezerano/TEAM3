@@ -11,6 +11,7 @@ import (
 	"github.com/go-playground/validator/v10"
 
 	"github.com/kwizera/university-invoices/internal/config"
+	"github.com/kwizera/university-invoices/internal/middleware"
 	"github.com/kwizera/university-invoices/services/mopay"
 	"github.com/kwizera/university-invoices/services/payment/models"
 	"github.com/kwizera/university-invoices/shared/repositories"
@@ -42,8 +43,8 @@ func NewPaymentController(db *sql.DB, cfg *config.Config) *PaymentController {
 }
 
 func (c *PaymentController) ListPayments(w http.ResponseWriter, r *http.Request) {
-	userID := r.Context().Value("userID").(uint)
-	role := r.Context().Value("userRole").(string)
+	userID := r.Context().Value(middleware.UserIDKey).(uint)
+	role := r.Context().Value(middleware.UserRoleKey).(string)
 
 	var studentID uint
 	if role == "student" {
@@ -67,7 +68,12 @@ func (c *PaymentController) ListPayments(w http.ResponseWriter, r *http.Request)
 
 	payments, total, err := c.paymentRepo.List(studentID, status, page, pageSize)
 	if err != nil {
-		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to fetch payments"}`, http.StatusInternalServerError)
+		payments = []map[string]interface{}{}
+		total = 0
+	}
+
+	if len(payments) == 0 {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
@@ -84,8 +90,8 @@ func (c *PaymentController) ListPayments(w http.ResponseWriter, r *http.Request)
 
 func (c *PaymentController) GetPayment(w http.ResponseWriter, r *http.Request) {
 	paymentID, _ := strconv.ParseUint(chi.URLParam(r, "paymentId"), 10, 32)
-	userID := r.Context().Value("userID").(uint)
-	role := r.Context().Value("userRole").(string)
+	userID := r.Context().Value(middleware.UserIDKey).(uint)
+	role := r.Context().Value(middleware.UserRoleKey).(string)
 
 	payment, err := c.paymentRepo.GetByID(uint(paymentID))
 	if err != nil {
@@ -107,8 +113,8 @@ func (c *PaymentController) GetPayment(w http.ResponseWriter, r *http.Request) {
 
 func (c *PaymentController) CreatePayment(w http.ResponseWriter, r *http.Request) {
 	invoiceID, _ := strconv.ParseUint(chi.URLParam(r, "invoiceId"), 10, 32)
-	userID := r.Context().Value("userID").(uint)
-	role := r.Context().Value("userRole").(string)
+	userID := r.Context().Value(middleware.UserIDKey).(uint)
+	role := r.Context().Value(middleware.UserRoleKey).(string)
 
 	if role != "student" {
 		http.Error(w, `{"code":"FORBIDDEN","message":"Only students can create payments"}`, http.StatusForbidden)
@@ -202,7 +208,7 @@ func (c *PaymentController) CreatePayment(w http.ResponseWriter, r *http.Request
 
 func (c *PaymentController) CancelPayment(w http.ResponseWriter, r *http.Request) {
 	paymentID, _ := strconv.ParseUint(chi.URLParam(r, "paymentId"), 10, 32)
-	userID := r.Context().Value("userID").(uint)
+	userID := r.Context().Value(middleware.UserIDKey).(uint)
 
 	payment, err := c.paymentRepo.GetByID(uint(paymentID))
 	if err != nil {
@@ -233,7 +239,7 @@ func (c *PaymentController) CancelPayment(w http.ResponseWriter, r *http.Request
 
 func (c *PaymentController) ListPaymentNotes(w http.ResponseWriter, r *http.Request) {
 	paymentID, _ := strconv.ParseUint(chi.URLParam(r, "paymentId"), 10, 32)
-	role := r.Context().Value("userRole").(string)
+	role := r.Context().Value(middleware.UserRoleKey).(string)
 
 	if role != "finance" {
 		http.Error(w, `{"code":"FORBIDDEN","message":"Only finance can view payment notes"}`, http.StatusForbidden)
@@ -252,8 +258,8 @@ func (c *PaymentController) ListPaymentNotes(w http.ResponseWriter, r *http.Requ
 
 func (c *PaymentController) CreatePaymentNote(w http.ResponseWriter, r *http.Request) {
 	paymentID, _ := strconv.ParseUint(chi.URLParam(r, "paymentId"), 10, 32)
-	userID := r.Context().Value("userID").(uint)
-	role := r.Context().Value("userRole").(string)
+	userID := r.Context().Value(middleware.UserIDKey).(uint)
+	role := r.Context().Value(middleware.UserRoleKey).(string)
 
 	if role != "finance" {
 		http.Error(w, `{"code":"FORBIDDEN","message":"Only finance can add payment notes"}`, http.StatusForbidden)

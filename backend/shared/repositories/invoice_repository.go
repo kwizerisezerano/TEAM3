@@ -75,9 +75,39 @@ func (r *InvoiceRepository) List(studentID uint, status, semesterID, programmeID
 		args = append(args, to)
 	}
 
-	countQuery := "SELECT COUNT(*) FROM invoices i" + query[61:]
+	countQuery := "SELECT COUNT(*) FROM invoices i WHERE 1=1"
+	var countArgs []interface{}
+	if studentID > 0 {
+		countQuery += " AND i.student_id = ?"
+		countArgs = append(countArgs, studentID)
+	}
+	if status != "" {
+		countQuery += " AND i.status = ?"
+		countArgs = append(countArgs, status)
+	}
+	if semesterID != "" {
+		countQuery += " AND i.semester_id = ?"
+		countArgs = append(countArgs, semesterID)
+	}
+	if programmeID != "" {
+		countQuery += " AND i.programme_id = ?"
+		countArgs = append(countArgs, programmeID)
+	}
+	if queryStr != "" {
+		countQuery += " AND (s.student_number LIKE ? OR u.full_name LIKE ? OR i.invoice_number LIKE ?)"
+		countArgs = append(countArgs, "%"+queryStr+"%", "%"+queryStr+"%", "%"+queryStr+"%")
+	}
+	if from != "" {
+		countQuery += " AND i.due_date >= ?"
+		countArgs = append(countArgs, from)
+	}
+	if to != "" {
+		countQuery += " AND i.due_date <= ?"
+		countArgs = append(countArgs, to)
+	}
+
 	var total int
-	if err := r.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+	if err := r.db.QueryRow(countQuery, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 

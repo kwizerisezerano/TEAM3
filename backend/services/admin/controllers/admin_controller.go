@@ -60,6 +60,11 @@ func (c *AdminController) ListUsers(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	if len(users) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(users)
 }
@@ -174,6 +179,11 @@ func (c *AdminController) ListAuditLogs(w http.ResponseWriter, r *http.Request) 
 	logs, total, err := c.auditRepo.List(recordType, recordRef, page, pageSize)
 	if err != nil {
 		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to fetch audit logs"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if len(logs) == 0 {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 

@@ -31,6 +31,11 @@ func (c *FinanceController) GetDashboard(w http.ResponseWriter, r *http.Request)
 	invoices, _, _ := c.invoiceRepo.List(0, "", "", "", "", "", "", 1, 1000)
 	payments, _, _ := c.paymentRepo.List(0, "", 1, 1000)
 
+	if len(invoices) == 0 && len(payments) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	totalInvoiced := int64(0)
 	totalCollected := int64(0)
 	overdueAmount := int64(0)
@@ -75,6 +80,11 @@ func (c *FinanceController) GetReportSummary(w http.ResponseWriter, r *http.Requ
 	invoices, _, _ := c.invoiceRepo.List(0, "", "", "", "", "", "", 1, 10000)
 	payments, _, _ := c.paymentRepo.List(0, "", 1, 10000)
 
+	if len(invoices) == 0 && len(payments) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	totalInvoiced := int64(0)
 	totalCollected := int64(0)
 
@@ -107,6 +117,11 @@ func (c *FinanceController) GetReportSummary(w http.ResponseWriter, r *http.Requ
 
 func (c *FinanceController) GetAccountsReport(w http.ResponseWriter, r *http.Request) {
 	invoices, _, _ := c.invoiceRepo.List(0, "", "", "", "", "", "", 1, 10000)
+
+	if len(invoices) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 
 	accounts := make(map[uint]map[string]interface{})
 	for _, inv := range invoices {
@@ -145,12 +160,17 @@ func (c *FinanceController) SearchStudents(w http.ResponseWriter, r *http.Reques
 	query := r.URL.Query().Get("q")
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit == 0 {
-		limit = 20
+		limit = 100
 	}
 
 	students, err := c.studentRepo.SearchStudents(query, limit)
 	if err != nil {
-		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to search students"}`, http.StatusInternalServerError)
+		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to fetch students"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if len(students) == 0 {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
@@ -165,6 +185,11 @@ func (c *FinanceController) ListProgrammes(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if len(programmes) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(programmes)
 }
@@ -173,6 +198,11 @@ func (c *FinanceController) ListSemesters(w http.ResponseWriter, r *http.Request
 	semesters, err := c.semesterRepo.ListAll()
 	if err != nil {
 		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to fetch semesters"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if len(semesters) == 0 {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 

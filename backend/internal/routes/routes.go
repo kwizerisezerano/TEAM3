@@ -49,8 +49,8 @@ func SetupRouter(db *sql.DB, cfg *config.Config) http.Handler {
 				r.Post("/", invoicecontrollers.NewInvoiceController(db).CreateInvoice)
 				r.Route("/{invoiceId}", func(r chi.Router) {
 					r.Get("/", invoicecontrollers.NewInvoiceController(db).GetInvoice)
-					r.Put("/", invoicecontrollers.NewInvoiceController(db).UpdateInvoice)
 					r.Post("/issue", invoicecontrollers.NewInvoiceController(db).IssueInvoice)
+					r.Put("/", invoicecontrollers.NewInvoiceController(db).UpdateInvoice)
 					r.Post("/payments", paymentcontrollers.NewPaymentController(db, cfg).CreatePayment)
 				})
 			})
