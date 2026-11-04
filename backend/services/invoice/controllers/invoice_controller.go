@@ -105,6 +105,11 @@ func (c *InvoiceController) GetInvoice(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"code":"FORBIDDEN","message":"You can only view your own invoices"}`, http.StatusForbidden)
 			return
 		}
+		// Students cannot view Draft invoices
+		if invoice["status"] == "Draft" {
+			http.Error(w, `{"code":"FORBIDDEN","message":"You cannot view draft invoices"}`, http.StatusForbidden)
+			return
+		}
 	}
 
 	items, err := c.invoiceItemRepo.GetByInvoiceID(uint(invoiceID))
