@@ -3,8 +3,10 @@ package controllers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -171,24 +173,34 @@ func (c *PaymentController) CreatePayment(w http.ResponseWriter, r *http.Request
 	mopayTransactionID := utils.RandomString(20)
 	expiresAt := time.Now().Add(2 * time.Minute)
 
-	_, err = c.paymentRepo.Create(uint(invoiceID), sid, req.Amount, req.MobileNumber, mopayReference, mopayTransactionID, expiresAt)
-	if err != nil {
-		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to create payment"}`, http.StatusInternalServerError)
-		return
-	}
+	// Normalize phone number (remove '+' and non-digits)
+	normalizedPhone := req.MobileNumber
+	normalizedPhone = strings.ReplaceAll(normalizedPhone, "+", "")
+	normalizedPhone = strings.ReplaceAll(normalizedPhone, " ", "")
 
-	// Call MoPay API to initiate payment
+	// Convert phone to int64 for MoPay API
+	phoneInt := int64(0)
+	fmt.Sscanf(normalizedPhone, "%d", &phoneInt)
+
+	// Normalize wallet phone as well
+	walletPhone := c.mopayService.WalletPhone()
+	walletPhone = strings.ReplaceAll(walletPhone, "+", "")
+	walletPhone = strings.ReplaceAll(walletPhone, " ", "")
+	walletPhoneInt := int64(0)
+	fmt.Sscanf(walletPhone, "%d", &walletPhoneInt)
+
+	// Call MoPay API to initiate payment first
 	mopayReq := mopay.InitiatePaymentRequest{
 		TransactionID: mopayTransactionID,
 		Amount:        float64(req.Amount),
 		Currency:      "RWF",
-		Phone:         req.MobileNumber,
+		Phone:         phoneInt,
 		PaymentMode:   "MOBILE",
 		Message:       "Invoice payment",
-		CallbackURL:   "",
+		CallbackURL:   c.mopayService.CallbackURL(),
 		Transfers: []mopay.Transfer{
 			{
-				Phone:   c.mopayService.WalletPhone(),
+				Phone:   walletPhoneInt,
 				Amount:  float64(req.Amount),
 				Message: "Invoice payment collection",
 			},
@@ -197,7 +209,14 @@ func (c *PaymentController) CreatePayment(w http.ResponseWriter, r *http.Request
 
 	_, err = c.mopayService.InitiatePayment(mopayReq)
 	if err != nil {
-		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to initiate MoPay payment"}`, http.StatusInternalServerError)
+		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to initiate MoPay payment: `+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Only create payment record after successful MoPay initiation
+	_, err = c.paymentRepo.Create(uint(invoiceID), sid, req.Amount, req.MobileNumber, mopayReference, mopayTransactionID, expiresAt)
+	if err != nil {
+		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to create payment"}`, http.StatusInternalServerError)
 		return
 	}
 

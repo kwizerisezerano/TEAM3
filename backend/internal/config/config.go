@@ -7,6 +7,7 @@ import (
 	"os"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/joho/godotenv"
 )
 
 type Config struct {
@@ -25,6 +26,11 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
+	// Load .env file
+	if err := godotenv.Load(); err != nil {
+		log.Println("Warning: .env file not found or error loading, using defaults")
+	}
+
 	cfg := &Config{
 		DBHost:             getEnv("DB_HOST", "localhost"),
 		DBPort:             getEnv("DB_PORT", "3306"),

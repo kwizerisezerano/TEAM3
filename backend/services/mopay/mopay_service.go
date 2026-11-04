@@ -22,7 +22,7 @@ type InitiatePaymentRequest struct {
 	TransactionID string     `json:"transaction_id"`
 	Amount        float64    `json:"amount"`
 	Currency      string     `json:"currency"`
-	Phone         string     `json:"phone"`
+	Phone         int64      `json:"phone"`
 	PaymentMode   string     `json:"payment_mode"`
 	Message       string     `json:"message"`
 	CallbackURL   string     `json:"callback_url"`
@@ -30,14 +30,14 @@ type InitiatePaymentRequest struct {
 }
 
 type Transfer struct {
-	Phone   string  `json:"phone"`
+	Phone   int64   `json:"phone"`
 	Amount  float64 `json:"amount"`
 	Message string  `json:"message"`
 }
 
 type InitiatePaymentResponse struct {
-	TransactionID string `json:"transaction_id"`
-	Status        string `json:"status"`
+	TransactionID string `json:"transactionId"`
+	Status        int    `json:"status"`
 	Message       string `json:"message"`
 }
 
@@ -85,7 +85,8 @@ func (s *Service) InitiatePayment(req InitiatePaymentRequest) (*InitiatePaymentR
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+s.apiToken)
+	authHeader := "Bearer " + s.apiToken
+	httpReq.Header.Set("Authorization", authHeader)
 
 	resp, err := s.httpClient.Do(httpReq)
 	if err != nil {
@@ -98,7 +99,7 @@ func (s *Service) InitiatePayment(req InitiatePaymentRequest) (*InitiatePaymentR
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return nil, fmt.Errorf("MoPay API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -130,7 +131,7 @@ func (s *Service) CheckTransactionStatus(transactionID string) (*StatusResponse,
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return nil, fmt.Errorf("MoPay API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -162,7 +163,7 @@ func (s *Service) GetCustomerInfo(phone string) (*CustomerInfoResponse, error) {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return nil, fmt.Errorf("MoPay API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -184,4 +185,8 @@ func (s *Service) IsFailed(status *StatusResponse) bool {
 
 func (s *Service) WalletPhone() string {
 	return s.walletPhone
+}
+
+func (s *Service) CallbackURL() string {
+	return s.callbackURL
 }
