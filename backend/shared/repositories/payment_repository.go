@@ -147,6 +147,7 @@ func (r *PaymentRepository) GetByID(id uint) (map[string]interface{}, error) {
 		"id":                   paymentID,
 		"invoice_id":           invoiceID,
 		"invoice_number":       invoiceNumber,
+		"student_id":           studentID,
 		"student_name":         fullName,
 		"description":          "Payment",
 		"amount":               amount,

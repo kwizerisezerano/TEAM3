@@ -35,7 +35,7 @@ func main() {
 	router := routes.SetupRouter(db, cfg)
 
 	// Start background jobs
-	jobScheduler := jobs.NewJobScheduler(db)
+	jobScheduler := jobs.NewJobScheduler(db, cfg)
 	jobScheduler.Start()
 	defer jobScheduler.Stop()
 

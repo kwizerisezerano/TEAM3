@@ -103,7 +103,20 @@ func (c *PaymentController) GetPayment(w http.ResponseWriter, r *http.Request) {
 
 	if role == "student" {
 		sid, _, _, _ := c.studentRepo.GetStudentByUserID(userID)
-		if sid != payment["student_id"].(uint) {
+		// Get the actual student_id from the payment record
+		var actualStudentID uint
+		if val, ok := payment["student_id"]; ok && val != nil {
+			actualStudentID = val.(uint)
+		} else {
+			// If student_id is not in the response, query it from the database
+			query := `SELECT student_id FROM payments WHERE id = ?`
+			err := c.paymentRepo.GetDB().QueryRow(query, paymentID).Scan(&actualStudentID)
+			if err != nil {
+				http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to verify payment ownership"}`, http.StatusInternalServerError)
+				return
+			}
+		}
+		if sid != actualStudentID {
 			http.Error(w, `{"code":"FORBIDDEN","message":"You can only view your own payments"}`, http.StatusForbidden)
 			return
 		}
@@ -207,14 +220,20 @@ func (c *PaymentController) CreatePayment(w http.ResponseWriter, r *http.Request
 		},
 	}
 
-	_, err = c.mopayService.InitiatePayment(mopayReq)
+	mopayResp, err := c.mopayService.InitiatePayment(mopayReq)
 	if err != nil {
 		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to initiate MoPay payment: `+err.Error()+`"}`, http.StatusInternalServerError)
 		return
 	}
 
+	// Use the transaction ID returned by MoPay for status checking
+	actualTransactionID := mopayResp.TransactionID
+	if actualTransactionID == "" {
+		actualTransactionID = mopayTransactionID
+	}
+
 	// Only create payment record after successful MoPay initiation
-	_, err = c.paymentRepo.Create(uint(invoiceID), sid, req.Amount, req.MobileNumber, mopayReference, mopayTransactionID, expiresAt)
+	_, err = c.paymentRepo.Create(uint(invoiceID), sid, req.Amount, req.MobileNumber, mopayReference, actualTransactionID, expiresAt)
 	if err != nil {
 		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to create payment"}`, http.StatusInternalServerError)
 		return
