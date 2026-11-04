@@ -143,9 +143,9 @@ print_success "Migrations completed"
 
 # Seed database with test data
 print_info "Seeding database with test data..."
-cd migrations
-go run seed.go
-cd ..
+cd tools/seed
+go run main.go
+cd ../..
 print_success "Seed data inserted"
 
 # Build the application

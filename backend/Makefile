@@ -39,7 +39,7 @@ migrate:
 
 seed:
 	@echo "Seeding database with test data..."
-	@cd migrations && go run seed.go
+	@cd tools/seed && go run main.go
 
 deps:
 	@echo "Downloading dependencies..."

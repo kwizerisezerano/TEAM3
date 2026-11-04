@@ -47,6 +47,10 @@ func (c *InvoiceController) ListInvoices(w http.ResponseWriter, r *http.Request)
 	// Finance and admin can see all invoices (studentID = 0 means no filter)
 
 	status := r.URL.Query().Get("status")
+	// Students cannot see Draft invoices
+	if role == "student" && status == "" {
+		status = "Issued,Partially Paid,Paid,Overdue"
+	}
 	semesterID := r.URL.Query().Get("semester_id")
 	programmeID := r.URL.Query().Get("programme_id")
 	queryStr := r.URL.Query().Get("q")

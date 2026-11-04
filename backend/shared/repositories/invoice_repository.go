@@ -41,8 +41,22 @@ func (r *InvoiceRepository) List(studentID uint, status, semesterID, programmeID
 
 	if status != "" {
 		argCount++
-		query += " AND i.status = ?"
-		args = append(args, status)
+		// Handle multiple statuses separated by comma
+		if contains(status, ",") {
+			query += " AND i.status IN ("
+			statuses := splitByComma(status)
+			for i, s := range statuses {
+				if i > 0 {
+					query += ","
+				}
+				query += "?"
+				args = append(args, s)
+			}
+			query += ")"
+		} else {
+			query += " AND i.status = ?"
+			args = append(args, status)
+		}
 	}
 
 	if semesterID != "" {
@@ -82,8 +96,22 @@ func (r *InvoiceRepository) List(studentID uint, status, semesterID, programmeID
 		countArgs = append(countArgs, studentID)
 	}
 	if status != "" {
-		countQuery += " AND i.status = ?"
-		countArgs = append(countArgs, status)
+		// Handle multiple statuses separated by comma
+		if contains(status, ",") {
+			countQuery += " AND i.status IN ("
+			statuses := splitByComma(status)
+			for i, s := range statuses {
+				if i > 0 {
+					countQuery += ","
+				}
+				countQuery += "?"
+				countArgs = append(countArgs, s)
+			}
+			countQuery += ")"
+		} else {
+			countQuery += " AND i.status = ?"
+			countArgs = append(countArgs, status)
+		}
 	}
 	if semesterID != "" {
 		countQuery += " AND i.semester_id = ?"
@@ -352,4 +380,26 @@ func (r *InvoiceRepository) GetByIDInTx(tx *sql.Tx, id uint) (map[string]interfa
 		"programme":      programme,
 		"semester":       semester,
 	}, nil
+}
+
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+func splitByComma(s string) []string {
+	var result []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == ',' {
+			result = append(result, s[start:i])
+			start = i + 1
+		}
+	}
+	result = append(result, s[start:])
+	return result
 }
