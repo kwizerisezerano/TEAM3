@@ -3,7 +3,6 @@ package controllers
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,33 +13,33 @@ import (
 
 	"github.com/kwizera/university-invoices/internal/config"
 	"github.com/kwizera/university-invoices/internal/middleware"
-	"github.com/kwizera/university-invoices/services/mopay"
+	"github.com/kwizera/university-invoices/services/hdev"
 	"github.com/kwizera/university-invoices/services/payment/models"
 	"github.com/kwizera/university-invoices/shared/repositories"
 	"github.com/kwizera/university-invoices/shared/utils"
 )
 
 type PaymentController struct {
-	paymentRepo  *repositories.PaymentRepository
-	invoiceRepo  *repositories.InvoiceRepository
-	receiptRepo  *repositories.ReceiptRepository
-	noteRepo     *repositories.PaymentNoteRepository
-	studentRepo  *repositories.StudentRepository
-	auditRepo    *repositories.AuditRepository
-	mopayService *mopay.Service
-	validator    *validator.Validate
+	paymentRepo *repositories.PaymentRepository
+	invoiceRepo *repositories.InvoiceRepository
+	receiptRepo *repositories.ReceiptRepository
+	noteRepo    *repositories.PaymentNoteRepository
+	studentRepo *repositories.StudentRepository
+	auditRepo   *repositories.AuditRepository
+	hdevService *hdev.Service
+	validator   *validator.Validate
 }
 
 func NewPaymentController(db *sql.DB, cfg *config.Config) *PaymentController {
 	return &PaymentController{
-		paymentRepo:  repositories.NewPaymentRepository(db),
-		invoiceRepo:  repositories.NewInvoiceRepository(db),
-		receiptRepo:  repositories.NewReceiptRepository(db),
-		noteRepo:     repositories.NewPaymentNoteRepository(db),
-		studentRepo:  repositories.NewStudentRepository(db),
-		auditRepo:    repositories.NewAuditRepository(db),
-		mopayService: mopay.NewService(cfg.MoPayAPIURL, cfg.MoPayAPIToken, cfg.MoPayWalletPhone, cfg.PaymentCallbackURL, cfg.PaymentTimeoutMS),
-		validator:    validator.New(),
+		paymentRepo: repositories.NewPaymentRepository(db),
+		invoiceRepo: repositories.NewInvoiceRepository(db),
+		receiptRepo: repositories.NewReceiptRepository(db),
+		noteRepo:    repositories.NewPaymentNoteRepository(db),
+		studentRepo: repositories.NewStudentRepository(db),
+		auditRepo:   repositories.NewAuditRepository(db),
+		hdevService: hdev.NewService(cfg.HDevAPIID, cfg.HDevAPIKey, cfg.PaymentCallbackURL, cfg.PaymentTimeoutMS),
+		validator:   validator.New(),
 	}
 }
 
@@ -182,8 +181,8 @@ func (c *PaymentController) CreatePayment(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	mopayReference := "MPY-" + time.Now().Format("20060102") + "-" + utils.RandomString(4)
-	mopayTransactionID := utils.RandomString(20)
+	hdevReference := "HDEV-" + time.Now().Format("20060102") + "-" + utils.RandomString(4)
+	transactionRef := hdevReference
 	expiresAt := time.Now().Add(2 * time.Minute)
 
 	// Normalize phone number (remove '+' and non-digits)
@@ -191,55 +190,35 @@ func (c *PaymentController) CreatePayment(w http.ResponseWriter, r *http.Request
 	normalizedPhone = strings.ReplaceAll(normalizedPhone, "+", "")
 	normalizedPhone = strings.ReplaceAll(normalizedPhone, " ", "")
 
-	// Convert phone to int64 for MoPay API
-	phoneInt := int64(0)
-	fmt.Sscanf(normalizedPhone, "%d", &phoneInt)
-
-	// Normalize wallet phone as well
-	walletPhone := c.mopayService.WalletPhone()
-	walletPhone = strings.ReplaceAll(walletPhone, "+", "")
-	walletPhone = strings.ReplaceAll(walletPhone, " ", "")
-	walletPhoneInt := int64(0)
-	fmt.Sscanf(walletPhone, "%d", &walletPhoneInt)
-
-	// Call MoPay API to initiate payment first
-	mopayReq := mopay.InitiatePaymentRequest{
-		TransactionID: mopayTransactionID,
-		Amount:        float64(req.Amount),
-		Currency:      "RWF",
-		Phone:         phoneInt,
-		PaymentMode:   "MOBILE",
-		Message:       "Invoice payment",
-		CallbackURL:   c.mopayService.CallbackURL(),
-		Transfers: []mopay.Transfer{
-			{
-				Phone:   walletPhoneInt,
-				Amount:  float64(req.Amount),
-				Message: "Invoice payment collection",
-			},
-		},
+	// Call HDEV API to initiate payment first
+	hdevReq := hdev.InitiatePaymentRequest{
+		Ref:    "pay",
+		Tel:    normalizedPhone,
+		TxRef:  transactionRef,
+		Amount: int(req.Amount),
+		Link:   c.hdevService.CallbackURL(),
 	}
 
-	mopayResp, err := c.mopayService.InitiatePayment(mopayReq)
+	hdevResp, err := c.hdevService.InitiatePayment(hdevReq)
 	if err != nil {
-		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to initiate MoPay payment: `+err.Error()+`"}`, http.StatusInternalServerError)
+		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to initiate HDEV payment: `+err.Error()+`"}`, http.StatusInternalServerError)
 		return
 	}
 
-	// Use the transaction ID returned by MoPay for status checking
-	actualTransactionID := mopayResp.TransactionID
-	if actualTransactionID == "" {
-		actualTransactionID = mopayTransactionID
+	// Use the transaction reference returned by HDEV for status checking
+	actualTxRef := hdevResp.TxRef
+	if actualTxRef == "" {
+		actualTxRef = transactionRef
 	}
 
-	// Only create payment record after successful MoPay initiation
-	_, err = c.paymentRepo.Create(uint(invoiceID), sid, req.Amount, req.MobileNumber, mopayReference, actualTransactionID, expiresAt)
+	// Only create payment record after successful HDEV initiation
+	_, err = c.paymentRepo.Create(uint(invoiceID), sid, req.Amount, req.MobileNumber, hdevReference, actualTxRef, expiresAt)
 	if err != nil {
 		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to create payment"}`, http.StatusInternalServerError)
 		return
 	}
 
-	c.auditRepo.Log("user", &userID, "Payment created", "payment", mopayReference, "", "Pending")
+	c.auditRepo.Log("user", &userID, "Payment created", "payment", hdevReference, "", "Pending")
 
 	w.WriteHeader(http.StatusAccepted)
 }

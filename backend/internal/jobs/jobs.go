@@ -6,25 +6,25 @@ import (
 	"time"
 
 	"github.com/kwizera/university-invoices/internal/config"
-	"github.com/kwizera/university-invoices/services/mopay"
+	"github.com/kwizera/university-invoices/services/hdev"
 	"github.com/kwizera/university-invoices/shared/repositories"
 )
 
 type JobScheduler struct {
-	db           *sql.DB
-	paymentRepo  *repositories.PaymentRepository
-	invoiceRepo  *repositories.InvoiceRepository
-	mopayService *mopay.Service
-	stopChan     chan struct{}
+	db          *sql.DB
+	paymentRepo *repositories.PaymentRepository
+	invoiceRepo *repositories.InvoiceRepository
+	hdevService *hdev.Service
+	stopChan    chan struct{}
 }
 
 func NewJobScheduler(db *sql.DB, cfg *config.Config) *JobScheduler {
 	return &JobScheduler{
-		db:           db,
-		paymentRepo:  repositories.NewPaymentRepository(db),
-		invoiceRepo:  repositories.NewInvoiceRepository(db),
-		mopayService: mopay.NewService(cfg.MoPayAPIURL, cfg.MoPayAPIToken, cfg.MoPayWalletPhone, cfg.PaymentCallbackURL, cfg.PaymentTimeoutMS),
-		stopChan:     make(chan struct{}),
+		db:          db,
+		paymentRepo: repositories.NewPaymentRepository(db),
+		invoiceRepo: repositories.NewInvoiceRepository(db),
+		hdevService: hdev.NewService(cfg.HDevAPIID, cfg.HDevAPIKey, cfg.PaymentCallbackURL, cfg.PaymentTimeoutMS),
+		stopChan:    make(chan struct{}),
 	}
 }
 
@@ -73,26 +73,26 @@ func (js *JobScheduler) checkPendingPayments() {
 	count := 0
 	for rows.Next() {
 		var id uint
-		var mopayTransactionID string
-		if err := rows.Scan(&id, &mopayTransactionID); err != nil {
+		var hdevTransactionID string
+		if err := rows.Scan(&id, &hdevTransactionID); err != nil {
 			continue
 		}
 
-		// Check status with MoPay API
-		statusResp, err := js.mopayService.CheckTransactionStatus(mopayTransactionID)
+		// Check status with HDEV API
+		statusResp, err := js.hdevService.CheckTransactionStatus(hdevTransactionID)
 		if err != nil {
 			log.Printf("Error checking status for payment %d: %v", id, err)
 			continue
 		}
 
-		// Update payment status based on MoPay response
+		// Update payment status based on HDEV response
 		var newStatus string
-		if statusResp.Status == 200 {
+		if statusResp.Status == "success" || statusResp.Status == "paid" {
 			newStatus = "Paid"
-		} else if statusResp.Status == 400 {
+		} else if statusResp.Status == "failed" || statusResp.Status == "cancelled" {
 			newStatus = "Failed"
 		} else {
-			// Still pending (201, 202, etc.)
+			// Still pending
 			continue
 		}
 

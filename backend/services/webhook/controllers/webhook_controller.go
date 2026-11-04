@@ -27,10 +27,8 @@ func NewWebhookController(db *sql.DB) *WebhookController {
 
 func (c *WebhookController) HandleMoPayWebhook(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
-		TransactionID string `json:"transaction_id"`
-		Reference     string `json:"reference"`
-		Status        string `json:"status"`
-		Amount        int64  `json:"amount"`
+		TxRef  string `json:"tx_ref"`
+		Status string `json:"status"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -45,30 +43,40 @@ func (c *WebhookController) HandleMoPayWebhook(w http.ResponseWriter, r *http.Re
 	}
 	defer tx.Rollback()
 
-	payment, err := c.paymentRepo.GetByTransactionIDInTx(tx, payload.TransactionID)
+	payment, err := c.paymentRepo.GetByTransactionIDInTx(tx, payload.TxRef)
 	if err != nil {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	if payment["status"].(string) == payload.Status {
+	currentStatus := payment["status"].(string)
+	var newStatus string
+	if payload.Status == "success" || payload.Status == "paid" {
+		newStatus = "Paid"
+	} else if payload.Status == "failed" || payload.Status == "cancelled" {
+		newStatus = "Failed"
+	} else {
+		newStatus = payload.Status
+	}
+
+	if currentStatus == newStatus {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
 	var paidAt *time.Time
-	if payload.Status == "Paid" {
+	if newStatus == "Paid" {
 		now := time.Now()
 		paidAt = &now
 	}
 
-	err = c.paymentRepo.UpdateStatusInTx(tx, payment["id"].(uint), payload.Status, paidAt)
+	err = c.paymentRepo.UpdateStatusInTx(tx, payment["id"].(uint), newStatus, paidAt)
 	if err != nil {
 		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to update payment"}`, http.StatusInternalServerError)
 		return
 	}
 
-	if payload.Status == "Paid" {
+	if newStatus == "Paid" {
 		amount := payment["amount"].(int64)
 		invoiceID := payment["invoice_id"].(uint)
 
@@ -91,7 +99,7 @@ func (c *WebhookController) HandleMoPayWebhook(w http.ResponseWriter, r *http.Re
 		c.auditRepo.LogInTx(tx, "system", nil, "Receipt generated", "receipt", "", "", "")
 		c.auditRepo.LogInTx(tx, "system", nil, "Invoice balance updated", "invoice", invoice["invoice_number"].(string), "", "")
 	} else {
-		c.auditRepo.LogInTx(tx, "gateway", nil, "Payment status updated", "payment", payment["mopay_reference"].(string), "Pending", payload.Status)
+		c.auditRepo.LogInTx(tx, "gateway", nil, "Payment status updated", "payment", payment["mopay_reference"].(string), "Pending", newStatus)
 	}
 
 	if err := tx.Commit(); err != nil {

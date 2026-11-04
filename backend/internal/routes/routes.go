@@ -106,7 +106,7 @@ func SetupRouter(db *sql.DB, cfg *config.Config) http.Handler {
 			})
 		})
 
-		r.Post("/webhooks/mopay", webhookcontrollers.NewWebhookController(db).HandleMoPayWebhook)
+		r.Post("/webhooks/hdev", webhookcontrollers.NewWebhookController(db).HandleMoPayWebhook)
 	})
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {

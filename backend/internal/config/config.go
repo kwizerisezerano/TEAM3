@@ -18,9 +18,8 @@ type Config struct {
 	DBName             string
 	ServerPort         string
 	JWTSecret          string
-	MoPayAPIURL        string
-	MoPayAPIToken      string
-	MoPayWalletPhone   string
+	HDevAPIID          string
+	HDevAPIKey         string
 	PaymentCallbackURL string
 	PaymentTimeoutMS   int
 }
@@ -39,9 +38,8 @@ func Load() (*Config, error) {
 		DBName:             getEnv("DB_NAME", "university_invoices"),
 		ServerPort:         getEnv("SERVER_PORT", "9107"),
 		JWTSecret:          getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
-		MoPayAPIURL:        getEnv("MOPAY_API_URL", "https://api.mopay.ishema.rw"),
-		MoPayAPIToken:      getEnv("MOPAY_API_TOKEN", ""),
-		MoPayWalletPhone:   getEnv("MOPAY_WALLET_PHONE", "250790989830"),
+		HDevAPIID:          getEnv("HDEV_API_ID", ""),
+		HDevAPIKey:         getEnv("HDEV_API_KEY", ""),
 		PaymentCallbackURL: getEnv("PAYMENT_CALLBACK_URL", ""),
 		PaymentTimeoutMS:   getEnvInt("PAYMENT_TIMEOUT_MS", 25000),
 	}

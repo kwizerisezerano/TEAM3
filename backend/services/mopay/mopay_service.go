@@ -19,13 +19,13 @@ type Service struct {
 }
 
 type InitiatePaymentRequest struct {
-	TransactionID string     `json:"transaction_id"`
+	TransactionID string     `json:"transactionId"`
 	Amount        float64    `json:"amount"`
 	Currency      string     `json:"currency"`
 	Phone         int64      `json:"phone"`
 	PaymentMode   string     `json:"payment_mode"`
 	Message       string     `json:"message"`
-	CallbackURL   string     `json:"callback_url"`
+	CallbackURL   string     `json:"callbackUrl"`
 	Transfers     []Transfer `json:"transfers,omitempty"`
 }
 
