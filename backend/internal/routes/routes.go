@@ -72,6 +72,7 @@ func SetupRouter(db *sql.DB, cfg *config.Config) http.Handler {
 					r.Get("/", receiptcontrollers.NewReceiptController(db).GetReceipt)
 					r.Get("/pdf", receiptcontrollers.NewReceiptController(db).GetReceiptPDF)
 				})
+				r.Get("/payment/{paymentId}", receiptcontrollers.NewReceiptController(db).GetReceiptByPaymentID)
 			})
 
 			r.Route("/finance", func(r chi.Router) {

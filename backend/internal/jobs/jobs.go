@@ -14,6 +14,7 @@ type JobScheduler struct {
 	db          *sql.DB
 	paymentRepo *repositories.PaymentRepository
 	invoiceRepo *repositories.InvoiceRepository
+	receiptRepo *repositories.ReceiptRepository
 	hdevService *hdev.Service
 	stopChan    chan struct{}
 }
@@ -23,6 +24,7 @@ func NewJobScheduler(db *sql.DB, cfg *config.Config) *JobScheduler {
 		db:          db,
 		paymentRepo: repositories.NewPaymentRepository(db),
 		invoiceRepo: repositories.NewInvoiceRepository(db),
+		receiptRepo: repositories.NewReceiptRepository(db),
 		hdevService: hdev.NewService(cfg.HDevAPIID, cfg.HDevAPIKey, cfg.PaymentCallbackURL, cfg.PaymentTimeoutMS),
 		stopChan:    make(chan struct{}),
 	}
@@ -144,7 +146,23 @@ func (js *JobScheduler) updateInvoiceBalance(paymentID uint) {
 		return
 	}
 
-	log.Printf("Updated invoice %d balance by %d", invoiceID, amount)
+	// Get updated invoice balance for receipt
+	var balance int64
+	balanceQuery := `SELECT balance FROM invoices WHERE id = ?`
+	err = js.db.QueryRow(balanceQuery, invoiceID).Scan(&balance)
+	if err != nil {
+		log.Printf("Error getting invoice balance: %v", err)
+		return
+	}
+
+	// Create receipt
+	_, err = js.receiptRepo.Create(paymentID, invoiceID, amount, balance)
+	if err != nil {
+		log.Printf("Error creating receipt: %v", err)
+		return
+	}
+
+	log.Printf("Updated invoice %d balance by %d and created receipt", invoiceID, amount)
 }
 
 func (js *JobScheduler) runOverdueInvoiceCheck() {
