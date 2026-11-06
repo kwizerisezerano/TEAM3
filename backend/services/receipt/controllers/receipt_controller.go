@@ -8,6 +8,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/signintech/gopdf"
 
 	"github.com/kwizera/university-invoices/shared/repositories"
+	"github.com/kwizera/university-invoices/shared/utils"
 )
 
 const logoURL = "https://res.cloudinary.com/danzeqybu/image/upload/v1793788865/Screenshot_From_2026-11-04_12-39-17_ka7vft.png"
@@ -163,11 +165,10 @@ func (c *ReceiptController) GetReceiptPDF(w http.ResponseWriter, r *http.Request
 	pdf.Start(gopdf.Config{PageSize: *gopdf.PageSizeA4})
 	pdf.AddPage()
 
-	if err := pdf.AddTTFFont("regular", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"); err != nil {
-		pdf.AddTTFFont("regular", "/System/Library/Fonts/Helvetica.ttc")
-	}
-	if err := pdf.AddTTFFont("bold", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"); err != nil {
-		pdf.AddTTFFont("bold", "/System/Library/Fonts/Helvetica-Bold.ttc")
+	if err := utils.AddSystemPDFFonts(&pdf); err != nil {
+		log.Printf("receipt PDF: %v", err)
+		http.Error(w, `{"code":"INTERNAL_SERVER_ERROR","message":"Unable to generate receipt PDF"}`, http.StatusInternalServerError)
+		return
 	}
 
 	const pageW, margin = 595.28, 40.0

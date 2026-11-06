@@ -10,11 +10,13 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/kwizera/university-invoices/shared/repositories"
+	"github.com/kwizera/university-invoices/shared/utils"
 	"github.com/signintech/gopdf"
 )
 
@@ -324,11 +326,10 @@ func (c *FinanceController) generateAccountsPDF(w http.ResponseWriter, accounts 
 	pdf := gopdf.GoPdf{}
 	pdf.Start(gopdf.Config{PageSize: *gopdf.PageSizeA4Landscape})
 
-	if err := pdf.AddTTFFont("regular", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"); err != nil {
-		pdf.AddTTFFont("regular", "/System/Library/Fonts/Helvetica.ttc")
-	}
-	if err := pdf.AddTTFFont("bold", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"); err != nil {
-		pdf.AddTTFFont("bold", "/System/Library/Fonts/Helvetica-Bold.ttc")
+	if err := utils.AddSystemPDFFonts(&pdf); err != nil {
+		log.Printf("finance report PDF: %v", err)
+		http.Error(w, `{"code":"INTERNAL_SERVER_ERROR","message":"Unable to generate finance report PDF"}`, http.StatusInternalServerError)
+		return
 	}
 
 	const pageW, margin = 841.89, 40.0 // A4 Landscape width
