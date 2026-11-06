@@ -80,6 +80,7 @@ func SetupRouter(db *sql.DB, cfg *config.Config) http.Handler {
 				r.Get("/dashboard", financecontrollers.NewFinanceController(db).GetDashboard)
 				r.Get("/reports/summary", financecontrollers.NewFinanceController(db).GetReportSummary)
 				r.Get("/reports/accounts", financecontrollers.NewFinanceController(db).GetAccountsReport)
+				r.Get("/reports/export", financecontrollers.NewFinanceController(db).ExportReport)
 				r.Get("/students", financecontrollers.NewFinanceController(db).SearchStudents)
 				r.Get("/programmes", financecontrollers.NewFinanceController(db).ListProgrammes)
 				r.Get("/semesters", financecontrollers.NewFinanceController(db).ListSemesters)

@@ -197,27 +197,52 @@ func (c *InvoiceController) UpdateInvoice(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Check if invoice exists and is in Draft status
+	invoice, err := c.invoiceRepo.GetByID(uint(invoiceID))
+	if err != nil {
+		http.Error(w, `{"code":"NOT_FOUND","message":"Invoice not found"}`, http.StatusNotFound)
+		return
+	}
+
+	status, ok := invoice["status"].(string)
+	if !ok {
+		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to get invoice status"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if status != "Draft" {
+		http.Error(w, `{"code":"CONFLICT","message":"Only draft invoices can be updated"}`, http.StatusConflict)
+		return
+	}
+
 	totalAmount := int64(0)
 	for _, item := range req.Items {
 		totalAmount += item.Amount
 	}
 
-	err := c.invoiceRepo.Update(uint(invoiceID), req.DueDate, totalAmount)
+	updated, err := c.invoiceRepo.Update(uint(invoiceID), req.DueDate, totalAmount)
 	if err != nil {
 		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to update invoice: `+err.Error()+`"}`, http.StatusInternalServerError)
 		return
 	}
 
+	// Update invoice items regardless of whether header values changed
 	c.invoiceItemRepo.DeleteByInvoiceID(uint(invoiceID))
 	for _, item := range req.Items {
 		c.invoiceItemRepo.Create(uint(invoiceID), item.FeeTypeID, "Fee", item.Amount)
 	}
 
-	invoice, _ := c.invoiceRepo.GetByID(uint(invoiceID))
+	invoice, _ = c.invoiceRepo.GetByID(uint(invoiceID))
 	items, _ := c.invoiceItemRepo.GetByInvoiceID(uint(invoiceID))
 	invoice["items"] = items
 
 	w.Header().Set("Content-Type", "application/json")
+
+	// Add a message if values didn't change
+	if !updated {
+		invoice["message"] = "Invoice updated (no changes to due date or total amount)"
+	}
+
 	json.NewEncoder(w).Encode(invoice)
 }
 

@@ -95,7 +95,7 @@ func (c *FeeController) UpdateFeeType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := c.feeRepo.Update(uint(feeTypeID), req.Name, req.Amount, req.EffectiveFrom)
+	updated, err := c.feeRepo.Update(uint(feeTypeID), req.Name, req.Amount, req.EffectiveFrom)
 	if err != nil {
 		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to update fee type"}`, http.StatusInternalServerError)
 		return
@@ -104,5 +104,11 @@ func (c *FeeController) UpdateFeeType(w http.ResponseWriter, r *http.Request) {
 	feeType, _ := c.feeRepo.GetByID(uint(feeTypeID))
 
 	w.Header().Set("Content-Type", "application/json")
+
+	// Add a message if values didn't change
+	if !updated {
+		feeType["message"] = "Fee type updated (no changes to values)"
+	}
+
 	json.NewEncoder(w).Encode(feeType)
 }

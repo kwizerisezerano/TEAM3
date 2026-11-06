@@ -89,7 +89,12 @@ func (r *InvoiceRepository) List(studentID uint, status, semesterID, programmeID
 		args = append(args, to)
 	}
 
-	countQuery := "SELECT COUNT(*) FROM invoices i WHERE 1=1"
+	countQuery := `
+		SELECT COUNT(*) FROM invoices i
+		JOIN students s ON i.student_id = s.id
+		JOIN users u ON s.user_id = u.id
+		WHERE 1=1
+	`
 	var countArgs []interface{}
 	if studentID > 0 {
 		countQuery += " AND i.student_id = ?"
@@ -253,21 +258,24 @@ func (r *InvoiceRepository) Create(studentID, programmeID, semesterID, createdBy
 	return uint(id), nil
 }
 
-func (r *InvoiceRepository) Update(id uint, dueDate string, totalAmount int64) error {
-	query := `
+func (r *InvoiceRepository) Update(id uint, dueDate string, totalAmount int64) (bool, error) {
+	// Perform the update without status check in WHERE clause
+	// The status check will be done in application logic
+	query := fmt.Sprintf(`
 		UPDATE invoices
 		SET due_date = ?, total_amount = ?
-		WHERE id = ? AND status = 'Draft'
-	`
-	result, err := r.db.Exec(query, dueDate, totalAmount, id)
+		WHERE id = %d
+	`, id)
+	result, err := r.db.Exec(query, dueDate, totalAmount)
 	if err != nil {
-		return err
+		return false, fmt.Errorf("update query failed: %w", err)
 	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		return errors.New("invoice not found or not in draft status")
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to get rows affected: %w", err)
 	}
-	return nil
+	// Return true if rows were affected (values changed), false otherwise
+	return rows > 0, nil
 }
 
 func (r *InvoiceRepository) Issue(id uint) error {

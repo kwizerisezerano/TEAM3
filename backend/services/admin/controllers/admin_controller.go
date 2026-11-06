@@ -14,6 +14,7 @@ import (
 )
 
 type AdminController struct {
+	db        *sql.DB
 	userRepo  *repositories.UserRepository
 	auditRepo *repositories.AuditRepository
 	validator *validator.Validate
@@ -21,6 +22,7 @@ type AdminController struct {
 
 func NewAdminController(db *sql.DB) *AdminController {
 	return &AdminController{
+		db:        db,
 		userRepo:  repositories.NewUserRepository(db),
 		auditRepo: repositories.NewAuditRepository(db),
 		validator: validator.New(),
@@ -84,6 +86,19 @@ func (c *AdminController) CreateUser(w http.ResponseWriter, r *http.Request) {
 
 	if err := c.validator.Struct(&req); err != nil {
 		http.Error(w, `{"code":"VALIDATION_ERROR","message":"One or more fields are invalid"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Check if email already exists
+	var count int
+	checkQuery := `SELECT COUNT(*) FROM users WHERE email = ?`
+	err := c.db.QueryRow(checkQuery, req.Email).Scan(&count)
+	if err != nil {
+		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to check email"}`, http.StatusInternalServerError)
+		return
+	}
+	if count > 0 {
+		http.Error(w, `{"code":"CONFLICT","message":"Email already exists"}`, http.StatusConflict)
 		return
 	}
 

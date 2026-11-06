@@ -109,12 +109,19 @@ func (r *FeeTypeRepository) Create(name string, programmeID, semesterID, created
 	return uint(id), nil
 }
 
-func (r *FeeTypeRepository) Update(id uint, name string, amount int64, effectiveFrom string) error {
+func (r *FeeTypeRepository) Update(id uint, name string, amount int64, effectiveFrom string) (bool, error) {
 	query := `
 		UPDATE fee_types
 		SET name = ?, amount = ?, effective_from = ?
 		WHERE id = ?
 	`
-	_, err := r.db.Exec(query, name, amount, effectiveFrom, id)
-	return err
+	result, err := r.db.Exec(query, name, amount, effectiveFrom, id)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
 }
