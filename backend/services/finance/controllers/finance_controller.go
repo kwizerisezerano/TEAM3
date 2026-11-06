@@ -170,9 +170,15 @@ func (c *FinanceController) GetAccountsReport(w http.ResponseWriter, r *http.Req
 			}
 		}
 
-		totalAmount, _ := inv["total_amount"].(int64)
-		paidAmount, _ := inv["paid_amount"].(int64)
-		balance, _ := inv["balance"].(int64)
+		totalAmount := int64(0)
+		if ta, ok := inv["total_amount"].(int64); ok {
+			totalAmount = ta
+		}
+		paidAmount := int64(0)
+		if pa, ok := inv["paid_amount"].(int64); ok {
+			paidAmount = pa
+		}
+		balance := totalAmount - paidAmount
 
 		accounts[studentID]["total_invoiced"] = accounts[studentID]["total_invoiced"].(int64) + totalAmount
 		accounts[studentID]["total_paid"] = accounts[studentID]["total_paid"].(int64) + paidAmount
@@ -279,9 +285,15 @@ func (c *FinanceController) ExportReport(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
-		totalAmount, _ := inv["total_amount"].(int64)
-		paidAmount, _ := inv["paid_amount"].(int64)
-		balance, _ := inv["balance"].(int64)
+		totalAmount := int64(0)
+		if ta, ok := inv["total_amount"].(int64); ok {
+			totalAmount = ta
+		}
+		paidAmount := int64(0)
+		if pa, ok := inv["paid_amount"].(int64); ok {
+			paidAmount = pa
+		}
+		balance := totalAmount - paidAmount
 
 		accounts[studentID]["total_invoiced"] = accounts[studentID]["total_invoiced"].(int64) + totalAmount
 		accounts[studentID]["total_paid"] = accounts[studentID]["total_paid"].(int64) + paidAmount

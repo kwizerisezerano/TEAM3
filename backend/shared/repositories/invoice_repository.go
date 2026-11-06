@@ -182,6 +182,7 @@ func (r *InvoiceRepository) List(studentID uint, status, semesterID, programmeID
 			},
 			"description":  description,
 			"total_amount": totalAmount,
+			"paid_amount":  paidAmount,
 			"balance":      balance,
 			"due_date":     dueDate,
 			"status":       status,
