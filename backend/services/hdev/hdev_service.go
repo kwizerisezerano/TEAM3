@@ -63,14 +63,14 @@ func (s *Service) InitiatePayment(req InitiatePaymentRequest) (*InitiatePaymentR
 	url := fmt.Sprintf("https://payment.hdevtech.cloud/api_pay/api/%s/%s", s.apiID, s.apiKey)
 	httpReq, err := http.NewRequest("POST", url, strings.NewReader(formData.Encode()))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create HDEV payment request")
 	}
 
 	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := s.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initiate payment: %w", err)
+		return nil, fmt.Errorf("HDEV payment request failed")
 	}
 	defer resp.Body.Close()
 
@@ -80,7 +80,7 @@ func (s *Service) InitiatePayment(req InitiatePaymentRequest) (*InitiatePaymentR
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("HDEV API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("HDEV API returned status %d", resp.StatusCode)
 	}
 
 	var response InitiatePaymentResponse
@@ -101,14 +101,14 @@ func (s *Service) CheckTransactionStatus(txRef string) (*StatusResponse, error) 
 	url := fmt.Sprintf("https://payment.hdevtech.cloud/api_pay/api/%s/%s", s.apiID, s.apiKey)
 	httpReq, err := http.NewRequest("POST", url, strings.NewReader(formData.Encode()))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create HDEV status request")
 	}
 
 	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := s.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check status: %w", err)
+		return nil, fmt.Errorf("HDEV status request failed")
 	}
 	defer resp.Body.Close()
 
@@ -118,7 +118,7 @@ func (s *Service) CheckTransactionStatus(txRef string) (*StatusResponse, error) 
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("HDEV API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("HDEV API returned status %d", resp.StatusCode)
 	}
 
 	var response StatusResponse

@@ -3,18 +3,16 @@ package jobs
 import (
 	"database/sql"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/kwizera/university-invoices/internal/config"
 	"github.com/kwizera/university-invoices/services/hdev"
-	"github.com/kwizera/university-invoices/shared/repositories"
+	paymentservice "github.com/kwizera/university-invoices/services/payment"
 )
 
 type JobScheduler struct {
 	db          *sql.DB
-	paymentRepo *repositories.PaymentRepository
-	invoiceRepo *repositories.InvoiceRepository
-	receiptRepo *repositories.ReceiptRepository
 	hdevService *hdev.Service
 	stopChan    chan struct{}
 }
@@ -22,9 +20,6 @@ type JobScheduler struct {
 func NewJobScheduler(db *sql.DB, cfg *config.Config) *JobScheduler {
 	return &JobScheduler{
 		db:          db,
-		paymentRepo: repositories.NewPaymentRepository(db),
-		invoiceRepo: repositories.NewInvoiceRepository(db),
-		receiptRepo: repositories.NewReceiptRepository(db),
 		hdevService: hdev.NewService(cfg.HDevAPIID, cfg.HDevAPIKey, cfg.PaymentCallbackURL, cfg.PaymentTimeoutMS),
 		stopChan:    make(chan struct{}),
 	}
@@ -89,24 +84,35 @@ func (js *JobScheduler) checkPendingPayments() {
 
 		// Update payment status based on HDEV response
 		var newStatus string
-		if statusResp.Status == "success" || statusResp.Status == "paid" {
+		if strings.EqualFold(strings.TrimSpace(statusResp.Status), "success") || strings.EqualFold(strings.TrimSpace(statusResp.Status), "paid") {
 			newStatus = "Paid"
-		} else if statusResp.Status == "failed" || statusResp.Status == "cancelled" {
+		} else if strings.EqualFold(strings.TrimSpace(statusResp.Status), "failed") || strings.EqualFold(strings.TrimSpace(statusResp.Status), "cancelled") {
 			newStatus = "Failed"
 		} else {
 			// Still pending
 			continue
 		}
 
-		updateQuery := `UPDATE payments SET status = ?, status_updated_at = NOW() WHERE id = ?`
-		if _, err := js.db.Exec(updateQuery, newStatus, id); err != nil {
-			log.Printf("Error updating payment %d status: %v", id, err)
-			continue
-		}
-
-		// If paid, update invoice balance
 		if newStatus == "Paid" {
-			js.updateInvoiceBalance(id)
+			if err := paymentservice.CompleteSuccessfulPayment(js.db, hdevTransactionID, "system"); err != nil {
+				log.Printf("Error completing successful payment %d: %v", id, err)
+				continue
+			}
+		} else {
+			updateQuery := `UPDATE payments SET status = ?, status_updated_at = NOW() WHERE id = ? AND status = 'Pending'`
+			result, err := js.db.Exec(updateQuery, newStatus, id)
+			if err != nil {
+				log.Printf("Error updating payment %d status: %v", id, err)
+				continue
+			}
+			updated, err := result.RowsAffected()
+			if err != nil {
+				log.Printf("Error checking payment %d status update: %v", id, err)
+				continue
+			}
+			if updated == 0 {
+				continue
+			}
 		}
 
 		count++
@@ -116,53 +122,6 @@ func (js *JobScheduler) checkPendingPayments() {
 	if count > 0 {
 		log.Printf("Updated %d payment statuses", count)
 	}
-}
-
-func (js *JobScheduler) updateInvoiceBalance(paymentID uint) {
-	// Get payment details
-	var invoiceID uint
-	var amount int64
-	query := `SELECT invoice_id, amount FROM payments WHERE id = ?`
-	err := js.db.QueryRow(query, paymentID).Scan(&invoiceID, &amount)
-	if err != nil {
-		log.Printf("Error getting payment details: %v", err)
-		return
-	}
-
-	// Update invoice paid amount
-	updateQuery := `
-		UPDATE invoices
-		SET paid_amount = paid_amount + ?,
-		    status = CASE
-		        WHEN paid_amount + ? >= total_amount THEN 'Paid'
-		        WHEN paid_amount + ? > 0 THEN 'Partially Paid'
-		        ELSE status
-		    END
-		WHERE id = ?
-	`
-	_, err = js.db.Exec(updateQuery, amount, amount, amount, invoiceID)
-	if err != nil {
-		log.Printf("Error updating invoice balance: %v", err)
-		return
-	}
-
-	// Get updated invoice balance for receipt
-	var balance int64
-	balanceQuery := `SELECT balance FROM invoices WHERE id = ?`
-	err = js.db.QueryRow(balanceQuery, invoiceID).Scan(&balance)
-	if err != nil {
-		log.Printf("Error getting invoice balance: %v", err)
-		return
-	}
-
-	// Create receipt
-	_, err = js.receiptRepo.Create(paymentID, invoiceID, amount, balance)
-	if err != nil {
-		log.Printf("Error creating receipt: %v", err)
-		return
-	}
-
-	log.Printf("Updated invoice %d balance by %d and created receipt", invoiceID, amount)
 }
 
 func (js *JobScheduler) runOverdueInvoiceCheck() {
