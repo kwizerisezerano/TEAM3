@@ -201,7 +201,7 @@ func (c *PaymentController) CreatePayment(w http.ResponseWriter, r *http.Request
 
 	hdevResp, err := c.hdevService.InitiatePayment(hdevReq)
 	if err != nil {
-		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to initiate HDEV payment: `+err.Error()+`"}`, http.StatusInternalServerError)
+		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Unable to initiate payment with the payment provider. Please try again later."}`, http.StatusBadGateway)
 		return
 	}
 
