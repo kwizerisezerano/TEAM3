@@ -44,7 +44,7 @@ func SetupRouter(db *sql.DB, cfg *config.Config) http.Handler {
 			})
 
 			r.Route("/invoices", func(r chi.Router) {
-				r.Use(middleware.RequireRole("student", "finance"))
+				r.Use(middleware.RequireRole("student", "finance", "admin"))
 				r.Get("/", invoicecontrollers.NewInvoiceController(db).ListInvoices)
 				r.Post("/", invoicecontrollers.NewInvoiceController(db).CreateInvoice)
 				r.Route("/{invoiceId}", func(r chi.Router) {
