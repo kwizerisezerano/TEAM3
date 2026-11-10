@@ -76,7 +76,7 @@ func SetupRouter(db *sql.DB, cfg *config.Config) http.Handler {
 			})
 
 			r.Route("/finance", func(r chi.Router) {
-				r.Use(middleware.RequireRole("finance"))
+				r.Use(middleware.RequireRole("finance", "admin"))
 				r.Get("/dashboard", financecontrollers.NewFinanceController(db).GetDashboard)
 				r.Get("/reports/summary", financecontrollers.NewFinanceController(db).GetReportSummary)
 				r.Get("/reports/accounts", financecontrollers.NewFinanceController(db).GetAccountsReport)
