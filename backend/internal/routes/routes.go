@@ -56,7 +56,7 @@ func SetupRouter(db *sql.DB, cfg *config.Config) http.Handler {
 			})
 
 			r.Route("/payments", func(r chi.Router) {
-				r.Use(middleware.RequireRole("student", "finance"))
+				r.Use(middleware.RequireRole("student", "finance", "admin"))
 				r.Get("/", paymentcontrollers.NewPaymentController(db, cfg).ListPayments)
 				r.Route("/{paymentId}", func(r chi.Router) {
 					r.Get("/", paymentcontrollers.NewPaymentController(db, cfg).GetPayment)
@@ -67,7 +67,7 @@ func SetupRouter(db *sql.DB, cfg *config.Config) http.Handler {
 			})
 
 			r.Route("/receipts", func(r chi.Router) {
-				r.Use(middleware.RequireRole("student", "finance"))
+				r.Use(middleware.RequireRole("student", "finance", "admin"))
 				r.Route("/{receiptId}", func(r chi.Router) {
 					r.Get("/", receiptcontrollers.NewReceiptController(db).GetReceipt)
 					r.Get("/pdf", receiptcontrollers.NewReceiptController(db).GetReceiptPDF)
