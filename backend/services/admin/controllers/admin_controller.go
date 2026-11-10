@@ -73,10 +73,12 @@ func (c *AdminController) ListUsers(w http.ResponseWriter, r *http.Request) {
 
 func (c *AdminController) CreateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Email    string `json:"email" validate:"required,email"`
-		FullName string `json:"full_name" validate:"required"`
-		Password string `json:"password" validate:"required,min=8"`
-		Role     string `json:"role" validate:"required,oneof=student finance admin"`
+		Email         string `json:"email" validate:"required,email"`
+		FullName      string `json:"full_name" validate:"required"`
+		Password      string `json:"password" validate:"required,min=8"`
+		Role          string `json:"role" validate:"required,oneof=student finance admin"`
+		StudentNumber string `json:"student_number"`
+		ProgrammeID   uint   `json:"programme_id"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -87,6 +89,18 @@ func (c *AdminController) CreateUser(w http.ResponseWriter, r *http.Request) {
 	if err := c.validator.Struct(&req); err != nil {
 		http.Error(w, `{"code":"VALIDATION_ERROR","message":"One or more fields are invalid"}`, http.StatusBadRequest)
 		return
+	}
+
+	// For students, require student_number and programme_id
+	if req.Role == "student" {
+		if req.StudentNumber == "" {
+			http.Error(w, `{"code":"VALIDATION_ERROR","message":"student_number is required for student role"}`, http.StatusBadRequest)
+			return
+		}
+		if req.ProgrammeID == 0 {
+			http.Error(w, `{"code":"VALIDATION_ERROR","message":"programme_id is required for student role"}`, http.StatusBadRequest)
+			return
+		}
 	}
 
 	// Check if email already exists
@@ -102,25 +116,69 @@ func (c *AdminController) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if student_number already exists (for students)
+	if req.Role == "student" {
+		var studentCount int
+		studentCheckQuery := `SELECT COUNT(*) FROM students WHERE student_number = ?`
+		err := c.db.QueryRow(studentCheckQuery, req.StudentNumber).Scan(&studentCount)
+		if err != nil {
+			http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to check student number"}`, http.StatusInternalServerError)
+			return
+		}
+		if studentCount > 0 {
+			http.Error(w, `{"code":"CONFLICT","message":"Student number already exists"}`, http.StatusConflict)
+			return
+		}
+	}
+
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to hash password"}`, http.StatusInternalServerError)
 		return
 	}
 
+	// Start transaction
+	tx, err := c.db.Begin()
+	if err != nil {
+		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to start transaction"}`, http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	// Insert user
 	query := `
 		INSERT INTO users (email, full_name, password_hash, role, access_status)
 		VALUES (?, ?, ?, ?, 'invited')
 	`
-	result, err := c.userRepo.Exec(query, req.Email, req.FullName, string(hashedPassword), req.Role)
+	result, err := tx.Exec(query, req.Email, req.FullName, string(hashedPassword), req.Role)
 	if err != nil {
 		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to create user"}`, http.StatusInternalServerError)
 		return
 	}
 
-	id, _ := result.LastInsertId()
+	userID, _ := result.LastInsertId()
 
-	c.auditRepo.Log("user", nil, "User created", "user", strconv.Itoa(int(id)), "", req.Email)
+	// For students, also create student record
+	if req.Role == "student" {
+		studentQuery := `
+			INSERT INTO students (user_id, student_number, programme_id)
+			VALUES (?, ?, ?)
+		`
+		_, err = tx.Exec(studentQuery, userID, req.StudentNumber, req.ProgrammeID)
+		if err != nil {
+			http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to create student record"}`, http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Log audit before commit
+	c.auditRepo.LogInTx(tx, "user", nil, "User created", "user", strconv.Itoa(int(userID)), "", req.Email)
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		http.Error(w, `{"code":"INTERNAL_ERROR","message":"Failed to commit transaction"}`, http.StatusInternalServerError)
+		return
+	}
 
 	w.WriteHeader(http.StatusCreated)
 }
